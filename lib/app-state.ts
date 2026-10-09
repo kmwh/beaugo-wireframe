@@ -76,8 +76,8 @@ export type AppState = {
 }
 
 export const richInitialState: AppState = {
-  role: null,
-  onboarded: false,
+  role: 'learner',
+  onboarded: true,
   learner: {
     name: '김배움',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
@@ -266,7 +266,7 @@ export const richInitialState: AppState = {
 }
 
 export const emptyInitialState: AppState = {
-  role: null,
+  role: 'learner',
   onboarded: true,
   learner: {
     ...richInitialState.learner,
@@ -302,7 +302,7 @@ export function loadState(): AppState {
         name: stored.learner?.name || initialState.learner.name,
         avatar: stored.learner?.avatar || initialState.learner.avatar,
         paymentMethods:
-          Array.isArray(stored.learner?.paymentMethods) && stored.learner.paymentMethods.length > 0
+          Array.isArray(stored.learner?.paymentMethods)
             ? stored.learner.paymentMethods
             : initialState.learner.paymentMethods,
         studyWindows: Array.isArray(stored.learner?.studyWindows)
@@ -319,13 +319,13 @@ export function loadState(): AppState {
         ...stored.creator,
         settlementAccount: stored.creator?.settlementAccount ?? initialState.creator.settlementAccount,
       },
-      purchased: stored.purchased ?? initialState.purchased,
-      progress: stored.progress ?? initialState.progress,
-      likes: stored.likes ?? initialState.likes,
-      notes: stored.notes ?? initialState.notes,
-      answers: stored.answers ?? initialState.answers,
+      purchased: Array.isArray(stored.purchased) ? stored.purchased : initialState.purchased,
+      progress: stored.progress && typeof stored.progress === 'object' ? stored.progress : initialState.progress,
+      likes: Array.isArray(stored.likes) ? stored.likes : initialState.likes,
+      notes: Array.isArray(stored.notes) ? stored.notes : initialState.notes,
+      answers: Array.isArray(stored.answers) ? stored.answers : initialState.answers,
       creatorCourses:
-        Array.isArray(stored.creatorCourses) && stored.creatorCourses.length > 0
+        Array.isArray(stored.creatorCourses)
           ? stored.creatorCourses
           : initialState.creatorCourses,
     }

@@ -29,7 +29,6 @@ export default function BaeugoApp() {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('courses')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('전체')
-  const [otActive, setOtActive] = useState(false)
   const [purchaseOpen, setPurchaseOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [backScreen, setBackScreen] = useState<Screen>('explore')
@@ -212,12 +211,12 @@ export default function BaeugoApp() {
   return (
     <AppShell
       screen={screen}
-      hideNav={screen === 'detail' || screen === 'plan' || screen === 'course-quiz' || (screen === 'home' && otActive)}
-      onNavigate={next => { setOtActive(false); setScreen(next) }}
+      hideNav={screen === 'detail' || screen === 'plan' || screen === 'course-quiz'}
+      onNavigate={next => setScreen(next)}
       isDemoEmpty={isDemoEmpty}
       onToggleDemoState={handleToggleDemoState}
     >
-      {screen === 'home' && <HomeScreen courses={courses} data={data} onCourse={course => openCourse(course, 'home')} onResume={resume} onOtActive={setOtActive} onLike={toggleLike} />}
+      {screen === 'home' && <HomeScreen courses={courses} data={data} onCourse={course => openCourse(course, 'home')} onResume={resume} onLike={toggleLike} />}
       {screen === 'plan' && <PlanScreen profile={data.learner} onBack={() => setScreen('home')} onSave={studyWindows => { update(current => ({ ...current, learner: { ...current.learner, studyWindows } })); setScreen('home'); setMessage('학습 계획을 저장했습니다.') }} />}
       {screen === 'explore' && <ExploreScreen courses={courses} data={data} filter={filter} setFilter={setFilter} onSearch={() => setScreen('search')} onCourse={course => openCourse(course, 'explore')} />}
       {screen === 'search' && <SearchScreen courses={courses} query={query} setQuery={setQuery} onBack={() => setScreen('explore')} onCourse={course => openCourse(course, 'search')} />}
@@ -463,36 +462,16 @@ function HomeScreen({
   data,
   onCourse,
   onResume,
-  onOtActive,
   onLike,
 }: {
   courses: Course[]
   data: AppState
   onCourse: (course: Course) => void
   onResume: (course: Course) => void
-  onOtActive: (active: boolean) => void
   onLike: (id: string) => void
 }) {
   const enrolled = courses.filter(course => data.purchased.includes(course.id))
   const popular = courses.filter(course => !data.purchased.includes(course.id) && (course.otVideo || course.otBlobId))
-  const otRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const node = otRef.current
-    if (!node) return
-    const updateVisibility = () => {
-      const bounds = node.getBoundingClientRect()
-      onOtActive(bounds.top <= window.innerHeight * 0.35 && bounds.bottom >= window.innerHeight * 0.65)
-    }
-    updateVisibility()
-    window.addEventListener('scroll', updateVisibility, { passive: true })
-    window.addEventListener('resize', updateVisibility)
-    return () => {
-      window.removeEventListener('scroll', updateVisibility)
-      window.removeEventListener('resize', updateVisibility)
-      onOtActive(false)
-    }
-  }, [onOtActive])
 
   return (
     <div>
@@ -531,7 +510,7 @@ function HomeScreen({
           <span>아래에서 풀화면으로 보기 ↓</span>
         </div>
       </div>
-      <div className="ot-feed" id="home-ot-feed" ref={otRef}>
+      <div className="ot-feed" id="home-ot-feed">
         {popular.map((course, index) => (
           <OTSlide key={course.id} course={course} index={index} total={popular.length} liked={data.likes.includes(`ot-${course.id}`)} onLike={() => onLike(`ot-${course.id}`)} onCourse={() => onCourse(course)} />
         ))}
