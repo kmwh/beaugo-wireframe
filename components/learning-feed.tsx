@@ -6,7 +6,7 @@ import type { Course, Lesson, Question } from '@/lib/demo-data'
 import type { AnswerRecord, Note } from '@/lib/app-state'
 import { readVideo } from '@/lib/blob-store'
 
-export type LearningQuizContext = { kind: 'video' | 'unit' | 'final'; courseId: string; unitIndex: number; lessonId?: string }
+export type LearningQuizContext = { kind: 'video' | 'unit' | 'final' | 'course-quiz'; courseId: string; unitIndex: number; lessonId?: string; questionId?: string }
 type FeedItem =
   | { id: string; type: 'video'; lesson: Lesson; number: number }
   | { id: string; type: 'quiz'; question: Question; context: LearningQuizContext }
