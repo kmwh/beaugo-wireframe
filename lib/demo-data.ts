@@ -301,3 +301,34 @@ export function minutes(course: Course): number {
 export function won(value: number): string {
   return value === 0 ? '무료' : `${value.toLocaleString('ko-KR')}원`
 }
+
+export type CreatorDailyStat = {
+  day: string
+  label: string
+  views: number
+  students: number
+  revenue: number
+}
+
+export const richDailyStats: CreatorDailyStat[] = [
+  { day: '10.01', label: '10월 1일', views: 110, students: 6, revenue: 174000 },
+  { day: '10.02', label: '10월 2일', views: 135, students: 8, revenue: 232000 },
+  { day: '10.03', label: '10월 3일', views: 98, students: 5, revenue: 145000 },
+  { day: '10.04', label: '10월 4일', views: 160, students: 11, revenue: 319000 },
+  { day: '10.05', label: '10월 5일', views: 185, students: 14, revenue: 406000 },
+  { day: '10.06', label: '10월 6일', views: 220, students: 16, revenue: 464000 },
+  { day: '10.07', label: '10월 7일', views: 175, students: 10, revenue: 290000 },
+  { day: '10.08', label: '10월 8일', views: 195, students: 12, revenue: 348000 },
+  { day: '10.09', label: '10월 9일', views: 142, students: 9, revenue: 261000 },
+]
+
+export const emptyDailyStats: CreatorDailyStat[] = []
+
+export const richPurchasedCourseIds: string[] = ['report', 'data', 'career', 'excel']
+export const emptyPurchasedCourseIds: string[] = []
+
+export const richLikes: string[] = ['report-u1-v1', 'ot-excel', 'data-u1-v1', 'ot-career']
+export const emptyLikes: string[] = []
+
+export const emptyCreatorCourses: Course[] = []
+

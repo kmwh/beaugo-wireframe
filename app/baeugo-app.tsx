@@ -7,7 +7,7 @@ import {
   Target, Trash2, UserRound, X,
 } from 'lucide-react'
 import { allLessons, demoCourses, interests, jobs, minutes, won, type Course, type Lesson, type Question } from '@/lib/demo-data'
-import { initialState, loadState, saveState, progressPercent, nextLearningItemId, hasWrongAnswer, type AppState, type Role, type Note, type StudyWindow, type PaymentMethod, type LearnerProfile } from '@/lib/app-state'
+import { initialState, loadState, saveState, resetDemoState, progressPercent, nextLearningItemId, hasWrongAnswer, isCourseCompleted, hasReviewQuiz, type AppState, type Role, type Note, type StudyWindow, type PaymentMethod, type LearnerProfile } from '@/lib/app-state'
 import { readVideo } from '@/lib/blob-store'
 import { CreatorStudio } from '@/components/creator-studio'
 import { LearningFeed, type LearningQuizContext } from '@/components/learning-feed'
@@ -126,6 +126,16 @@ export default function BaeugoApp() {
     update(current => ({ ...current, progress: { ...current.progress, [id]: { position, watched: current.progress[id]?.watched ?? false, quizDone: current.progress[id]?.quizDone ?? false } } }))
   }
 
+  const isDemoEmpty = data.purchased.length === 0 && data.notes.length === 0 && data.creatorCourses.length === 0
+  function handleSwitchDemoState(mode: 'rich' | 'empty') {
+    const next = resetDemoState(mode)
+    setData(next)
+    setMessage(mode === 'rich' ? '풍부한 정상 데모 데이터로 복원되었습니다.' : '빈 상태(Empty State)로 전환되었습니다.')
+  }
+  function handleToggleDemoState() {
+    handleSwitchDemoState(isDemoEmpty ? 'rich' : 'empty')
+  }
+
   if (!hydrated) return <div className="loading-shell">BAEUGO</div>
   if (screen === 'welcome') return <Welcome onChoose={role => { update(current => ({ ...current, role })); setScreen('onboarding') }} />
   if (screen === 'onboarding') return <Onboarding role={data.role ?? 'learner'} onBack={() => setScreen('welcome')} onComplete={partial => {
@@ -137,6 +147,8 @@ export default function BaeugoApp() {
       profile={data.creator}
       courses={data.creatorCourses}
       activity={data}
+      isDemoEmpty={isDemoEmpty}
+      onToggleDemoState={handleToggleDemoState}
       onPublish={course => {
         update(current => ({ ...current, creatorCourses: [course, ...current.creatorCourses] }))
         setMessage('강좌가 등록되었습니다.')
@@ -197,35 +209,52 @@ export default function BaeugoApp() {
     )
   }
 
-  return <AppShell screen={screen} hideNav={screen === 'detail' || screen === 'plan' || screen === 'course-quiz' || (screen === 'home' && otActive)} onNavigate={next => { setOtActive(false); setScreen(next) }}>
-    {screen === 'home' && <HomeScreen courses={courses} data={data} onCourse={course => openCourse(course, 'home')} onResume={resume} onOtActive={setOtActive} onLike={toggleLike} />}
-    {screen === 'plan' && <PlanScreen profile={data.learner} onBack={() => setScreen('home')} onSave={(dailyMinutes, studyWindows) => { update(current => ({ ...current, learner: { ...current.learner, dailyMinutes, studyWindows } })); setScreen('home'); setMessage('학습 계획을 저장했습니다.') }} />}
-    {screen === 'explore' && <ExploreScreen courses={courses} data={data} filter={filter} setFilter={setFilter} onSearch={() => setScreen('search')} onCourse={course => openCourse(course, 'explore')} />}
-    {screen === 'search' && <SearchScreen courses={courses} query={query} setQuery={setQuery} onBack={() => setScreen('explore')} onCourse={course => openCourse(course, 'search')} />}
-    {screen === 'settings' && <MyPageScreen profile={data.learner} onUpdateLearner={partial => { update(curr => ({ ...curr, learner: { ...curr.learner, ...partial } })); setMessage('마이페이지 정보가 저장되었습니다.') }} onRestart={() => { update(curr => ({ ...curr, onboarded: false })); setScreen('welcome') }} onCreator={() => { update(curr => ({ ...curr, role: 'creator' })); setScreen('creator') }} onLogout={handleLogout} />}
-    {screen === 'mypage' && <MyPageScreen profile={data.learner} onUpdateLearner={partial => { update(curr => ({ ...curr, learner: { ...curr.learner, ...partial } })); setMessage('마이페이지 정보가 저장되었습니다.') }} onRestart={() => { update(curr => ({ ...curr, onboarded: false })); setScreen('welcome') }} onCreator={() => { update(curr => ({ ...curr, role: 'creator' })); setScreen('creator') }} onLogout={handleLogout} />}
-    {screen === 'detail' && <CourseDetail course={selectedCourse} data={data} hasAccess={hasAccess} onBack={() => setScreen(backScreen)} onOt={() => { setScreen('home'); window.setTimeout(() => document.getElementById(`ot-${selectedCourse.id}`)?.scrollIntoView({ behavior: 'smooth' }), 80) }} onBuy={() => setPurchaseOpen(true)} onResume={() => resume(selectedCourse)} onLesson={id => openLesson(selectedCourse, id)} />}
-    {screen === 'library' && <LibraryScreen courses={courses} data={data} tab={libraryTab} setTab={setLibraryTab} onCourse={course => openCourse(course, 'library')} onLesson={(course, id, seek) => openLesson(course, id, seek)} onExplore={() => setScreen('explore')} onCreator={() => { update(current => ({ ...current, role: 'creator' })); setScreen('creator') }} onSelectCourseQuiz={(course, question) => openCourseQuiz(course, question)} />}
-    {screen === 'course-quiz' && courseQuizTarget && (
-      <CourseQuizScreen
-        course={courseQuizTarget.course}
-        question={courseQuizTarget.question}
-        answers={data.answers}
-        onBack={() => setScreen('library')}
-        onSubmitAnswer={(selected, correct) => {
-          submitAnswer(
-            { kind: 'course-quiz', courseId: courseQuizTarget.course.id, unitIndex: 0, questionId: courseQuizTarget.question.id },
-            selected,
-            correct,
-            courseQuizTarget.question
-          )
-        }}
-      />
-    )}
-    {purchaseOpen && <div className="modal-backdrop" role="presentation" onClick={() => setPurchaseOpen(false)}><div className="modal-card" role="dialog" aria-modal="true" aria-label="체험용 강좌 구매" onClick={event => event.stopPropagation()}><button className="icon-only modal-close" onClick={() => setPurchaseOpen(false)} aria-label="닫기"><X /></button><p className="eyebrow">체험용 결제</p><h2>{selectedCourse.title}</h2><p>{won(selectedCourse.price)} · 실제 결제는 이루어지지 않습니다.</p><button className="primary-button" onClick={buySelected}>체험용으로 수강 시작</button></div></div>}
-    {message && <div className="toast" role="status">{message}</div>}
-    <span className="sr-only">{demoNotice}</span>
-  </AppShell>
+  return (
+    <AppShell
+      screen={screen}
+      hideNav={screen === 'detail' || screen === 'plan' || screen === 'course-quiz' || (screen === 'home' && otActive)}
+      onNavigate={next => { setOtActive(false); setScreen(next) }}
+      isDemoEmpty={isDemoEmpty}
+      onToggleDemoState={handleToggleDemoState}
+    >
+      {screen === 'home' && <HomeScreen courses={courses} data={data} onCourse={course => openCourse(course, 'home')} onResume={resume} onOtActive={setOtActive} onLike={toggleLike} />}
+      {screen === 'plan' && <PlanScreen profile={data.learner} onBack={() => setScreen('home')} onSave={studyWindows => { update(current => ({ ...current, learner: { ...current.learner, studyWindows } })); setScreen('home'); setMessage('학습 계획을 저장했습니다.') }} />}
+      {screen === 'explore' && <ExploreScreen courses={courses} data={data} filter={filter} setFilter={setFilter} onSearch={() => setScreen('search')} onCourse={course => openCourse(course, 'explore')} />}
+      {screen === 'search' && <SearchScreen courses={courses} query={query} setQuery={setQuery} onBack={() => setScreen('explore')} onCourse={course => openCourse(course, 'search')} />}
+      {(screen === 'settings' || screen === 'mypage') && (
+        <MyPageScreen
+          profile={data.learner}
+          isDemoEmpty={isDemoEmpty}
+          onSwitchDemoState={handleSwitchDemoState}
+          onUpdateLearner={partial => { update(curr => ({ ...curr, learner: { ...curr.learner, ...partial } })); setMessage('마이페이지 정보가 저장되었습니다.') }}
+          onRestart={() => { update(curr => ({ ...curr, onboarded: false })); setScreen('welcome') }}
+          onCreator={() => { update(curr => ({ ...curr, role: 'creator' })); setScreen('creator') }}
+          onLogout={handleLogout}
+        />
+      )}
+      {screen === 'detail' && <CourseDetail course={selectedCourse} data={data} hasAccess={hasAccess} onBack={() => setScreen(backScreen)} onOt={() => { setScreen('home'); window.setTimeout(() => document.getElementById(`ot-${selectedCourse.id}`)?.scrollIntoView({ behavior: 'smooth' }), 80) }} onBuy={() => setPurchaseOpen(true)} onResume={() => resume(selectedCourse)} onLesson={id => openLesson(selectedCourse, id)} />}
+      {screen === 'library' && <LibraryScreen courses={courses} data={data} tab={libraryTab} setTab={setLibraryTab} onCourse={course => openCourse(course, 'library')} onLesson={(course, id, seek) => openLesson(course, id, seek)} onExplore={() => setScreen('explore')} onCreator={() => { update(current => ({ ...current, role: 'creator' })); setScreen('creator') }} onSelectCourseQuiz={(course, question) => openCourseQuiz(course, question)} />}
+      {screen === 'course-quiz' && courseQuizTarget && (
+        <CourseQuizScreen
+          course={courseQuizTarget.course}
+          question={courseQuizTarget.question}
+          answers={data.answers}
+          onBack={() => setScreen('library')}
+          onSubmitAnswer={(selected, correct) => {
+            submitAnswer(
+              { kind: 'course-quiz', courseId: courseQuizTarget.course.id, unitIndex: 0, questionId: courseQuizTarget.question.id },
+              selected,
+              correct,
+              courseQuizTarget.question
+            )
+          }}
+        />
+      )}
+      {purchaseOpen && <div className="modal-backdrop" role="presentation" onClick={() => setPurchaseOpen(false)}><div className="modal-card" role="dialog" aria-modal="true" aria-label="체험용 강좌 구매" onClick={event => event.stopPropagation()}><button className="icon-only modal-close" onClick={() => setPurchaseOpen(false)} aria-label="닫기"><X /></button><p className="eyebrow">체험용 결제</p><h2>{selectedCourse.title}</h2><p>{won(selectedCourse.price)} · 실제 결제는 이루어지지 않습니다.</p><button className="primary-button" onClick={buySelected}>체험용으로 수강 시작</button></div></div>}
+      {message && <div className="toast" role="status">{message}</div>}
+      <span className="sr-only">{demoNotice}</span>
+    </AppShell>
+  )
 }
 
 function Welcome({ onChoose }: { onChoose: (role: Role) => void }) {
@@ -239,11 +268,44 @@ function validStudyWindows(windows: StudyWindow[]): boolean {
   return ordered.every((window, index) => index === 0 || ordered[index - 1].end <= window.start)
 }
 
-function StudyPlanFields({ dailyMinutes, setDailyMinutes, windows, setWindows }: { dailyMinutes: number; setDailyMinutes: (value: number) => void; windows: StudyWindow[]; setWindows: React.Dispatch<React.SetStateAction<StudyWindow[]>> }) {
+function StudyPlanFields({ windows, setWindows }: { windows: StudyWindow[]; setWindows: React.Dispatch<React.SetStateAction<StudyWindow[]>> }) {
   const updateWindow = (id: string, field: 'start' | 'end', value: string) => setWindows(current => current.map(window => window.id === id ? { ...window, [field]: value } : window))
   const ordered = [...windows].sort((a, b) => a.start.localeCompare(b.start))
   const overlap = ordered.some((window, index) => index > 0 && window.start && ordered[index - 1].end && window.start < ordered[index - 1].end)
-  return <div className="form-stack study-plan-fields"><label>하루 목표 학습 시간<select value={dailyMinutes} onChange={event => setDailyMinutes(Number(event.target.value))}>{[10, 15, 20, 30, 45, 60, 90, 120].map(value => <option key={value} value={value}>{value}분</option>)}</select></label><div className="study-window-header"><strong>학습할 시간대 <span className="optional-label">선택 사항</span></strong><p>시간대를 정하지 않고 시작해도 돼요. 필요하면 여러 개를 추가할 수 있습니다.</p></div><div className="study-window-list">{windows.map((window, index) => <div className="study-window" key={window.id}><span className="study-window-number">{index + 1}</span><label>시작<input type="time" aria-label={`${index + 1}번째 시작 시간`} value={window.start} onChange={event => updateWindow(window.id, 'start', event.target.value)} /></label><span className="study-window-separator">~</span><label>종료<input type="time" aria-label={`${index + 1}번째 종료 시간`} value={window.end} onChange={event => updateWindow(window.id, 'end', event.target.value)} /></label><button type="button" className="remove-window" aria-label={`${index + 1}번째 시간대 삭제`} onClick={() => setWindows(current => current.filter(item => item.id !== window.id))}><X /></button></div>)}</div><button type="button" className="add-window" onClick={() => setWindows(current => [...current, { id: crypto.randomUUID(), start: '', end: '' }])}><Plus /> 시간대 추가</button>{windows.some(window => window.start && window.end && window.start >= window.end) && <p className="field-error">종료 시간은 시작 시간보다 늦어야 합니다.</p>}{overlap && <p className="field-error">겹치는 시간대는 등록할 수 없습니다.</p>}</div>
+  return (
+    <div className="form-stack study-plan-fields">
+      <div className="study-window-header">
+        <strong>학습할 시간대 <span className="optional-label">선택 사항</span></strong>
+        <p>시간대를 정하지 않고 시작해도 돼요. 필요하면 여러 개를 추가할 수 있습니다.</p>
+      </div>
+      <div className="study-window-list">
+        {windows.map((window, index) => (
+          <div className="study-window" key={window.id}>
+            <span className="study-window-number">{index + 1}</span>
+            <label>
+              시작
+              <input type="time" aria-label={`${index + 1}번째 시작 시간`} value={window.start} onChange={event => updateWindow(window.id, 'start', event.target.value)} />
+            </label>
+            <span className="study-window-separator">~</span>
+            <label>
+              종료
+              <input type="time" aria-label={`${index + 1}번째 종료 시간`} value={window.end} onChange={event => updateWindow(window.id, 'end', event.target.value)} />
+            </label>
+            <button type="button" className="remove-window" aria-label={`${index + 1}번째 시간대 삭제`} onClick={() => setWindows(current => current.filter(item => item.id !== window.id))}>
+              <X />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="add-window" onClick={() => setWindows(current => [...current, { id: crypto.randomUUID(), start: '', end: '' }])}>
+        <Plus /> 시간대 추가
+      </button>
+      {windows.some(window => window.start && window.end && window.start >= window.end) && (
+        <p className="field-error">종료 시간은 시작 시간보다 늦어야 합니다.</p>
+      )}
+      {overlap && <p className="field-error">겹치는 시간대는 등록할 수 없습니다.</p>}
+    </div>
+  )
 }
 
 function Onboarding({ role, onBack, onComplete }: { role: Role; onBack: () => void; onComplete: (value: Partial<AppState>) => void }) {
@@ -251,37 +313,124 @@ function Onboarding({ role, onBack, onComplete }: { role: Role; onBack: () => vo
   const [status, setStatus] = useState('')
   const [job, setJob] = useState('')
   const [topics, setTopics] = useState<string[]>([])
-  const [dailyMinutes, setDailyMinutes] = useState(20)
   const [studyWindows, setStudyWindows] = useState<StudyWindow[]>([])
   const [bio, setBio] = useState('')
   const isCreator = role === 'creator'
-  const titles = isCreator ? ['전문 직무를 알려 주세요', '강의 키워드를 선택해 주세요', '강사 약력을 입력해 주세요'] : ['현재 어떤 상황인가요?', '현재 또는 희망 직무는?', '관심 주제를 선택해 주세요', '하루 학습 계획을 정해요']
+  const titles = isCreator
+    ? ['전문 직무를 알려 주세요', '강의 키워드를 선택해 주세요', '강사 약력을 입력해 주세요']
+    : ['현재 어떤 상황인가요?', '현재 또는 희망 직무는?', '관심 주제를 선택해 주세요', '학습 시간대를 정해요']
   const total = titles.length
-  const canContinue = isCreator ? step === 0 ? Boolean(job) : step === 1 ? topics.length > 0 : bio.trim().length >= 5 : step === 0 ? Boolean(status) : step === 1 ? Boolean(job) : step === 2 ? topics.length > 0 : dailyMinutes > 0 && validStudyWindows(studyWindows)
+  const canContinue = isCreator
+    ? step === 0 ? Boolean(job) : step === 1 ? topics.length > 0 : bio.trim().length >= 5
+    : step === 0 ? Boolean(status) : step === 1 ? Boolean(job) : step === 2 ? topics.length > 0 : validStudyWindows(studyWindows)
   const toggleTopic = (value: string) => setTopics(current => current.includes(value) ? current.filter(item => item !== value) : [...current, value])
   function next() {
     if (!canContinue) return
     if (step < total - 1) setStep(step + 1)
     else if (isCreator) onComplete({ creator: { ...initialState.creator, job, keywords: topics, bio } })
-    else onComplete({ learner: { ...initialState.learner, status, job, interests: topics, dailyMinutes, studyWindows: [...studyWindows].sort((a, b) => a.start.localeCompare(b.start)) } })
+    else onComplete({ learner: { ...initialState.learner, status, job, interests: topics, studyWindows: [...studyWindows].sort((a, b) => a.start.localeCompare(b.start)) } })
   }
-  return <main className="onboarding mobile-shell"><div className="onboarding-head"><button className="icon-only" onClick={() => step ? setStep(step - 1) : onBack()} aria-label="뒤로"><ArrowLeft /></button><span>{step + 1} / {total}</span></div><div className="step-progress"><span style={{ width: `${(step + 1) / total * 100}%` }} /></div><section className="onboarding-body"><p className="eyebrow">{isCreator ? '강의자 시작하기' : '나에게 맞는 학습'}</p><h1>{titles[step]}</h1>{!isCreator && step === 0 && <div className="option-stack">{['취업 준비 중', '재직 중', '이직·직무 전환 준비 중'].map(item => <button className={status === item ? 'choice selected' : 'choice'} key={item} onClick={() => setStatus(item)}>{item}{status === item && <Check />}</button>)}</div>}
-  {(isCreator ? step === 0 : step === 1) && <div className="chip-grid">{jobs.map(item => <button className={job === item ? 'chip selected' : 'chip'} key={item} onClick={() => setJob(item)}>{item}</button>)}</div>}
-  {(isCreator ? step === 1 : step === 2) && <><p className="muted">여러 개를 선택할 수 있습니다.</p><div className="chip-grid">{interests.map(item => <button className={topics.includes(item) ? 'chip selected' : 'chip'} key={item} onClick={() => toggleTopic(item)}>{item}</button>)}</div></>}
-  {!isCreator && step === 3 && <StudyPlanFields dailyMinutes={dailyMinutes} setDailyMinutes={setDailyMinutes} windows={studyWindows} setWindows={setStudyWindows} />}
-  {isCreator && step === 2 && <label className="form-stack">강사 약력<textarea rows={5} value={bio} onChange={event => setBio(event.target.value)} placeholder="전문 경력과 수강생에게 전하고 싶은 내용을 적어 주세요." /><small className="muted">5자 이상 입력해 주세요.</small></label>}</section><button className="primary-button sticky-inside" disabled={!canContinue} onClick={next}>{step === total - 1 ? '완료하고 시작하기' : '다음'} <ChevronRight /></button></main>
+  return (
+    <main className="onboarding mobile-shell">
+      <div className="onboarding-head">
+        <button className="icon-only" onClick={() => step ? setStep(step - 1) : onBack()} aria-label="뒤로">
+          <ArrowLeft />
+        </button>
+        <span>{step + 1} / {total}</span>
+      </div>
+      <div className="step-progress">
+        <span style={{ width: `${(step + 1) / total * 100}%` }} />
+      </div>
+      <section className="onboarding-body">
+        <p className="eyebrow">{isCreator ? '강의자 시작하기' : '나에게 맞는 학습'}</p>
+        <h1>{titles[step]}</h1>
+        {!isCreator && step === 0 && (
+          <div className="option-stack">
+            {['취업 준비 중', '재직 중', '이직·직무 전환 준비 중'].map(item => (
+              <button className={status === item ? 'choice selected' : 'choice'} key={item} onClick={() => setStatus(item)}>
+                {item}{status === item && <Check />}
+              </button>
+            ))}
+          </div>
+        )}
+        {(isCreator ? step === 0 : step === 1) && (
+          <div className="chip-grid">
+            {jobs.map(item => (
+              <button className={job === item ? 'chip selected' : 'chip'} key={item} onClick={() => setJob(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
+        )}
+        {(isCreator ? step === 1 : step === 2) && (
+          <>
+            <p className="muted">여러 개를 선택할 수 있습니다.</p>
+            <div className="chip-grid">
+              {interests.map(item => (
+                <button className={topics.includes(item) ? 'chip selected' : 'chip'} key={item} onClick={() => toggleTopic(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {!isCreator && step === 3 && (
+          <StudyPlanFields windows={studyWindows} setWindows={setStudyWindows} />
+        )}
+        {isCreator && step === 2 && (
+          <label className="form-stack">
+            강사 약력
+            <textarea rows={5} value={bio} onChange={event => setBio(event.target.value)} placeholder="전문 경력과 수강생에게 전하고 싶은 내용을 적어 주세요." />
+            <small className="muted">5자 이상 입력해 주세요.</small>
+          </label>
+        )}
+      </section>
+      <button className="primary-button sticky-inside" disabled={!canContinue} onClick={next}>
+        {step === total - 1 ? '완료하고 시작하기' : '다음'} <ChevronRight />
+      </button>
+    </main>
+  )
 }
 
-function PlanScreen({ profile, onBack, onSave }: { profile: AppState['learner']; onBack: () => void; onSave: (dailyMinutes: number, studyWindows: StudyWindow[]) => void }) {
-  const [dailyMinutes, setDailyMinutes] = useState(profile.dailyMinutes)
+function PlanScreen({ profile, onBack, onSave }: { profile: AppState['learner']; onBack: () => void; onSave: (studyWindows: StudyWindow[]) => void }) {
   const [studyWindows, setStudyWindows] = useState<StudyWindow[]>(profile.studyWindows)
-  return <main className="screen-padding plan-screen"><div className="step-header"><button className="icon-only" onClick={onBack} aria-label="홈으로 돌아가기"><ArrowLeft /></button><div><p className="eyebrow">MY PLAN</p><h1>학습 계획 변경</h1></div></div><p className="muted">출근 전과 퇴근 후처럼 필요한 시간대를 여러 개 지정하세요.</p><StudyPlanFields dailyMinutes={dailyMinutes} setDailyMinutes={setDailyMinutes} windows={studyWindows} setWindows={setStudyWindows} /><button className="primary-button full" disabled={!validStudyWindows(studyWindows)} onClick={() => onSave(dailyMinutes, [...studyWindows].sort((a, b) => a.start.localeCompare(b.start)))}>학습 계획 저장</button></main>
+  return (
+    <main className="screen-padding plan-screen">
+      <div className="step-header">
+        <button className="icon-only" onClick={onBack} aria-label="홈으로 돌아가기">
+          <ArrowLeft />
+        </button>
+        <div>
+          <p className="eyebrow">MY PLAN</p>
+          <h1>학습 시간대 설정</h1>
+        </div>
+      </div>
+      <p className="muted">출근 전과 퇴근 후처럼 필요한 시간대를 여러 개 지정하세요.</p>
+      <StudyPlanFields windows={studyWindows} setWindows={setStudyWindows} />
+      <button className="primary-button full" disabled={!validStudyWindows(studyWindows)} onClick={() => onSave([...studyWindows].sort((a, b) => a.start.localeCompare(b.start)))}>
+        학습 계획 저장
+      </button>
+    </main>
+  )
 }
 
-function AppShell({ children, screen, hideNav, onNavigate }: { children: React.ReactNode; screen: Screen; hideNav: boolean; onNavigate: (screen: Screen) => void }) {
+function AppShell({
+  children,
+  screen,
+  hideNav,
+  onNavigate,
+  isDemoEmpty,
+  onToggleDemoState,
+}: {
+  children: React.ReactNode
+  screen: Screen
+  hideNav: boolean
+  onNavigate: (screen: Screen) => void
+  isDemoEmpty?: boolean
+  onToggleDemoState?: () => void
+}) {
   return (
     <div className="app-frame mobile-shell">
-      {/* 우측 상단 설정 버튼 제거됨 */}
       <header className="app-header">
         <button className="logo" onClick={() => onNavigate('home')}>BAEUGO</button>
       </header>
@@ -444,7 +593,7 @@ function OTSlide({ course, index, total, liked, onLike, onCourse }: { course: Co
           />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-bold text-white block leading-tight">{course.teacher}</div>
-            <div className="text-[11px] text-white/80 truncate">{course.teacherBio || `${course.job} 실무 멘토`}</div>
+            <div className="text-xs text-white/80 truncate">{course.teacherBio || `${course.job} 실무 멘토`}</div>
           </div>
         </div>
         <p>{course.summary}</p>
@@ -547,14 +696,14 @@ function SearchScreen({ courses, query, setQuery, onBack, onCourse }: { courses:
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${sortBy === 'popular' ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${sortBy === 'popular' ? 'bg-indigo-600 text-white border border-indigo-600 shadow-2xs' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'}`}
               onClick={() => setSortBy('popular')}
             >
               인기순
             </button>
             <button
               type="button"
-              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${sortBy === 'level' ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${sortBy === 'level' ? 'bg-indigo-600 text-white border border-indigo-600 shadow-2xs' : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'}`}
               onClick={() => setSortBy('level')}
             >
               난이도순
@@ -563,7 +712,7 @@ function SearchScreen({ courses, query, setQuery, onBack, onCourse }: { courses:
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
-          <span className="text-[11px] font-bold text-slate-500 shrink-0">난이도</span>
+          <span className="text-xs font-semibold text-slate-600 shrink-0">난이도</span>
           {(['전체', '초급', '중급', '고급'] as const).map(lvl => (
             <button
               key={lvl}
@@ -640,7 +789,6 @@ function SearchScreen({ courses, query, setQuery, onBack, onCourse }: { courses:
 }
 
 function CourseDetail({ course, data, hasAccess, onBack, onOt, onBuy, onResume, onLesson }: { course: Course; data: AppState; hasAccess: boolean; onBack: () => void; onOt: () => void; onBuy: () => void; onResume: () => void; onLesson: (id: string) => void }) {
-  const days = Math.ceil(minutes(course) / Math.max(1, data.learner.dailyMinutes))
   return (
     <div className="course-detail">
       <div className="detail-cover" style={{ backgroundImage: `linear-gradient(180deg,#08132220,#081322aa),url(${course.cover})` }}>
@@ -654,7 +802,7 @@ function CourseDetail({ course, data, hasAccess, onBack, onOt, onBuy, onResume, 
         <p>{course.summary}</p>
         <div className="detail-metrics">
           <span><Clock3 /> 계획 학습 {minutes(course)}분</span>
-          <span><Target /> 하루 {data.learner.dailyMinutes}분이면 약 {days}일</span>
+          <span><Target /> 총 {allLessons(course).length}개 핵심 영상</span>
         </div>
         <small className="muted">시연 영상은 학습 흐름 확인을 위해 짧게 제작했습니다.</small>
         {!hasAccess && (course.otVideo || course.otBlobId) && (
@@ -771,7 +919,6 @@ function LibraryScreen({
   onCreator: () => void
   onSelectCourseQuiz: (course: Course, question: Question) => void
 }) {
-  // 수정 사항: '대본 있음' 탭 제거 (내 강좌, 좋아요, 메모, 퀴즈 4개 탭)
   const tabs: [LibraryTab, string][] = [
     ['courses', '내 강좌'],
     ['likes', '좋아요'],
@@ -779,13 +926,34 @@ function LibraryScreen({
     ['quiz', '퀴즈'],
   ]
 
+  const [courseFilter, setCourseFilter] = useState<'all' | 'in_progress' | 'completed'>('all')
+  const [quizFilter, setQuizFilter] = useState<'all' | 'passed' | 'review' | 'unattempted'>('all')
+
   const enrolled = courses.filter(course => data.purchased.includes(course.id))
+  const inProgressCourses = enrolled.filter(course => progressPercent(course, data) < 100)
+  const completedCourses = enrolled.filter(course => progressPercent(course, data) === 100)
+  const displayedCourses = courseFilter === 'all' ? enrolled : courseFilter === 'in_progress' ? inProgressCourses : completedCourses
+
   const findCourse = (id: string) => courses.find(course => course.id === id)
 
   // 퀴즈 탭에 노출할 강좌 목록 (수강 중인 강좌 우선, 없으면 전체 강좌)
-  const coursesForQuizzes = enrolled.length > 0
-    ? enrolled
-    : courses
+  const coursesForQuizzes = enrolled.length > 0 ? enrolled : courses
+
+  const quizItems = coursesForQuizzes.map(course => {
+    const courseQuiz = course.courseQuizzes?.[0] ?? course.finalQuestion
+    const answer = [...data.answers].reverse().find(a => a.questionId === courseQuiz.id)
+    return { course, courseQuiz, answer }
+  })
+  const passedQuizCount = quizItems.filter(item => item.answer?.correct === true).length
+  const reviewQuizCount = quizItems.filter(item => item.answer !== undefined && !item.answer.correct).length
+  const unattemptedQuizCount = quizItems.filter(item => item.answer === undefined).length
+
+  const filteredQuizItems = quizItems.filter(item => {
+    if (quizFilter === 'passed') return item.answer?.correct === true
+    if (quizFilter === 'review') return item.answer !== undefined && !item.answer.correct
+    if (quizFilter === 'unattempted') return item.answer === undefined
+    return true
+  })
 
   return (
     <div className="screen-padding library-screen">
@@ -809,17 +977,75 @@ function LibraryScreen({
       </div>
 
       <div className="library-list">
-        {/* 1. 내 강좌 탭 */}
-        {tab === 'courses' && enrolled.map(course => (
-          <button className="library-item" key={course.id} onClick={() => onCourse(course)}>
-            <span className="library-cover" style={{ backgroundImage: `url(${course.cover})` }} />
-            <span>
-              <strong>{course.title}</strong>
-              <small>진도 {progressPercent(course, data)}% · 메모 {data.notes.filter(note => note.courseId === course.id).length}개</small>
-            </span>
-            <ChevronRight />
-          </button>
-        ))}
+        {/* 1. 내 강좌 탭 (전체 / 수강 중 / 완강 서브 필터) */}
+        {tab === 'courses' && enrolled.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                courseFilter === 'all'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setCourseFilter('all')}
+            >
+              전체 ({enrolled.length})
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                courseFilter === 'in_progress'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setCourseFilter('in_progress')}
+            >
+              수강 중 ({inProgressCourses.length})
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                courseFilter === 'completed'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setCourseFilter('completed')}
+            >
+              완강 ({completedCourses.length})
+            </button>
+          </div>
+        )}
+
+        {tab === 'courses' && displayedCourses.map(course => {
+          const isCompleted = progressPercent(course, data) === 100
+          return (
+            <button className="library-item" key={course.id} onClick={() => onCourse(course)}>
+              <span className="library-cover" style={{ backgroundImage: `url(${course.cover})` }} />
+              <span>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span
+                    className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                      isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-50 text-indigo-700'
+                    }`}
+                  >
+                    {isCompleted ? '완강' : '수강 중'}
+                  </span>
+                  <strong>{course.title}</strong>
+                </div>
+                <small>진도 {progressPercent(course, data)}% · 메모 {data.notes.filter(note => note.courseId === course.id).length}개</small>
+              </span>
+              <ChevronRight />
+            </button>
+          )
+        })}
+
+        {tab === 'courses' && enrolled.length > 0 && displayedCourses.length === 0 && (
+          <div className="empty-box">
+            {courseFilter === 'completed'
+              ? '완강한 강좌가 아직 없습니다. 수강 중인 강좌를 계속 학습해 보세요!'
+              : '수강 중인 강좌가 없습니다.'}
+          </div>
+        )}
 
         {/* 2. 좋아요 탭 */}
         {tab === 'likes' && data.likes.map(id => {
@@ -855,12 +1081,58 @@ function LibraryScreen({
         })}
 
         {/* 4. 수정 사항: '퀴즈' 탭 (코스 퀴즈는 각 강좌마다 하나, 클릭 시 퀴즈 화면으로 이동하여 재시험 여부 선택) */}
+        {tab === 'quiz' && coursesForQuizzes.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                quizFilter === 'all'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setQuizFilter('all')}
+            >
+              전체 ({coursesForQuizzes.length})
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                quizFilter === 'passed'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setQuizFilter('passed')}
+            >
+              정답 ({passedQuizCount})
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                quizFilter === 'review'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setQuizFilter('review')}
+            >
+              복습 필요 ({reviewQuizCount})
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                quizFilter === 'unattempted'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => setQuizFilter('unattempted')}
+            >
+              미응시 ({unattemptedQuizCount})
+            </button>
+          </div>
+        )}
+
         {tab === 'quiz' && (
           <div className="space-y-3 w-full">
-            {coursesForQuizzes.map(course => {
-              const courseQuiz = course.courseQuizzes?.[0] ?? course.finalQuestion
-              const answer = [...data.answers].reverse().find(a => a.questionId === courseQuiz.id)
-
+            {filteredQuizItems.map(({ course, courseQuiz, answer }) => {
               return (
                 <button
                   key={course.id}
@@ -875,27 +1147,27 @@ function LibraryScreen({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
                           코스 퀴즈
                         </span>
                         {answer === undefined ? (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                             미응시
                           </span>
                         ) : answer.correct ? (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 flex items-center gap-0.5">
-                            <Check className="w-3 h-3" /> 100점 (정답)
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 flex items-center gap-0.5">
+                            <Check className="w-3.5 h-3.5" /> 100점 (정답)
                           </span>
                         ) : (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 flex items-center gap-0.5">
-                            <X className="w-3 h-3" /> 0점 (오답)
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-700 flex items-center gap-0.5">
+                            <X className="w-3.5 h-3.5" /> 0점 (오답/복습 필요)
                           </span>
                         )}
                       </div>
-                      <strong className="text-xs font-bold text-slate-900 block truncate group-hover:text-indigo-600 transition-colors">
+                      <strong className="text-sm font-bold text-slate-900 block truncate group-hover:text-indigo-600 transition-colors">
                         {course.title}
                       </strong>
-                      <p className="text-[11px] text-slate-500 truncate mb-0 mt-0.5">
+                      <p className="text-xs text-slate-500 truncate mb-0 mt-0.5">
                         {courseQuiz.prompt}
                       </p>
                     </div>
@@ -904,6 +1176,11 @@ function LibraryScreen({
                 </button>
               )
             })}
+            {filteredQuizItems.length === 0 && (
+              <div className="empty-box">
+                해당 조건에 일치하는 퀴즈가 없습니다.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -979,11 +1256,11 @@ function CourseQuizScreen({
               style={{ backgroundImage: `url(${course.cover})` }}
             />
             <div className="min-w-0 flex-1">
-              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded mb-1 inline-block">
+              <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md mb-1 inline-block">
                 {course.topic} · {course.level}
               </span>
               <h2 className="text-xs font-bold text-slate-900 truncate mb-0">{course.title}</h2>
-              <small className="text-[11px] text-slate-500 block truncate">{course.teacher}</small>
+              <small className="text-xs text-slate-500 block truncate">{course.teacher}</small>
             </div>
           </div>
 
@@ -1011,13 +1288,13 @@ function CourseQuizScreen({
                     </strong>
                     <div className="text-xs text-slate-600 space-y-1">
                       <div className="flex items-start gap-1.5">
-                        <span className="text-[11px] font-bold text-slate-500 shrink-0">제출했던 답안:</span>
+                        <span className="text-xs font-bold text-slate-500 shrink-0">제출했던 답안:</span>
                         <span className={latestAnswer.correct ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
                           {question.options[latestAnswer.selected]}
                         </span>
                       </div>
                     </div>
-                    <div className="text-[11px] text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200/60 mt-1">
+                    <div className="text-xs text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200/60 mt-1">
                       <strong className="text-slate-800 block mb-0.5">정답 및 해설</strong>
                       {question.explanation}
                     </div>
@@ -1027,7 +1304,7 @@ function CourseQuizScreen({
                     <p className="text-xs font-bold text-indigo-900 mb-0">
                       이미 응시한 코스 퀴즈입니다.
                     </p>
-                    <p className="text-[11px] text-indigo-700 mb-0">
+                    <p className="text-xs text-indigo-700 mb-0">
                       재시험에 응시하시면 점수가 새로 반영됩니다. 재시험을 보시겠습니까?
                     </p>
                   </div>
@@ -1069,7 +1346,7 @@ function CourseQuizScreen({
                     <strong className="text-xs font-bold text-slate-800 block pt-1">
                       Q. {question.prompt}
                     </strong>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-xs text-slate-500">
                       코스 완강 후 학습 내용을 총괄 점검하는 1문항 코스 퀴즈입니다.
                     </p>
                   </div>
@@ -1194,12 +1471,12 @@ function CourseQuizScreen({
                       <span>{String.fromCharCode(65 + index)}</span>
                       <span className="flex-1">{option}</span>
                       {isCorrectChoice && (
-                        <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                        <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
                           정답
                         </span>
                       )}
                       {isUserChoice && !isCorrectChoice && (
-                        <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                        <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
                           내 답안
                         </span>
                       )}
@@ -1241,12 +1518,16 @@ function MyPageScreen({
   onRestart,
   onCreator,
   onLogout,
+  isDemoEmpty,
+  onSwitchDemoState,
 }: {
   profile: LearnerProfile
   onUpdateLearner: (change: Partial<LearnerProfile>) => void
   onRestart: () => void
   onCreator: () => void
   onLogout: () => void
+  isDemoEmpty?: boolean
+  onSwitchDemoState?: (mode: 'rich' | 'empty') => void
 }) {
   // 프로필 상태
   const [name, setName] = useState(profile.name || '김배움')
@@ -1259,7 +1540,6 @@ function MyPageScreen({
   const [status, setStatus] = useState(profile.status || '재직 중')
   const [job, setJob] = useState(profile.job || jobs[0])
   const [topics, setTopics] = useState<string[]>(profile.interests || ['문서 작성', '데이터 분석'])
-  const [dailyMinutes, setDailyMinutes] = useState(profile.dailyMinutes || 20)
 
   // 결제 방식 상태
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(profile.paymentMethods || [])
@@ -1282,7 +1562,7 @@ function MyPageScreen({
   }
 
   const handleSaveOnboarding = () => {
-    onUpdateLearner({ status, job, interests: topics, dailyMinutes })
+    onUpdateLearner({ status, job, interests: topics })
   }
 
   const handleAddPayment = () => {
@@ -1427,15 +1707,6 @@ function MyPageScreen({
           </div>
         </div>
 
-        <label className="form-stack">
-          하루 목표 학습 시간
-          <select value={dailyMinutes} onChange={e => setDailyMinutes(Number(e.target.value))}>
-            {[10, 15, 20, 30, 45, 60, 90, 120].map(val => (
-              <option key={val} value={val}>{val}분</option>
-            ))}
-          </select>
-        </label>
-
         <button type="button" className="primary-button full" onClick={handleSaveOnboarding}>
           온보딩 정보 저장
         </button>
@@ -1472,19 +1743,19 @@ function MyPageScreen({
                   <div className="flex items-center gap-1.5">
                     <strong className="text-xs font-bold text-slate-900">{method.name}</strong>
                     {method.isDefault && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.2 bg-indigo-100 text-indigo-700 rounded-full">
+                      <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">
                         기본 결제
                       </span>
                     )}
                   </div>
-                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">{method.numberMasked}</span>
+                  <span className="text-xs text-slate-500 font-mono block mt-0.5">{method.numberMasked}</span>
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">
                   {!method.isDefault && (
                     <button
                       type="button"
-                      className="text-[11px] font-bold px-2 py-1 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100"
+                      className="text-xs font-semibold px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-100"
                       onClick={() => handleSetDefaultPayment(method.id)}
                     >
                       기본 설정
@@ -1509,7 +1780,7 @@ function MyPageScreen({
           <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3 mt-2">
             <span className="text-xs font-bold text-indigo-900 block">새 결제 수단 등록</span>
             <div className="grid grid-cols-2 gap-2">
-              <label className="text-[11px] font-bold text-slate-700">
+              <label className="text-xs font-bold text-slate-700">
                 수단 종류
                 <select
                   className="mt-1 w-full p-1.5 bg-white border border-slate-300 rounded text-xs"
@@ -1522,7 +1793,7 @@ function MyPageScreen({
                   <option value="toss">토스페이</option>
                 </select>
               </label>
-              <label className="text-[11px] font-bold text-slate-700">
+              <label className="text-xs font-bold text-slate-700">
                 카드/간편결제 명칭
                 <input
                   className="mt-1 w-full p-1.5 bg-white border border-slate-300 rounded text-xs"
@@ -1532,7 +1803,7 @@ function MyPageScreen({
                 />
               </label>
             </div>
-            <label className="text-[11px] font-bold text-slate-700 block">
+            <label className="text-xs font-bold text-slate-700 block">
               카드번호 또는 연결 계좌 정보
               <input
                 className="mt-1 w-full p-1.5 bg-white border border-slate-300 rounded text-xs font-mono"
@@ -1562,7 +1833,39 @@ function MyPageScreen({
         )}
       </div>
 
-      {/* 4. 모드 전환 & 시작 재설정 */}
+      {/* 4. Mock 데모 데이터 상태 테스트 (정상 상태 vs Empty State) */}
+      <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+            <span>데모 Mock 데이터 상태</span>
+          </h2>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isDemoEmpty ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+            {isDemoEmpty ? 'Empty State 모드' : '정상 Mock 모드'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mb-0">
+          모든 화면의 정상 상태(완강/수강중/메모/퀴즈/통계)와 비어 있는 상태(Empty State)를 즉시 전환하여 테스트할 수 있습니다.
+        </p>
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <button
+            type="button"
+            className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${!isDemoEmpty ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+            onClick={() => onSwitchDemoState?.('rich')}
+          >
+            정상 Mock 데이터
+          </button>
+          <button
+            type="button"
+            className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${isDemoEmpty ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+            onClick={() => onSwitchDemoState?.('empty')}
+          >
+            빈 데이터 (Empty State)
+          </button>
+        </div>
+      </div>
+
+      {/* 5. 모드 전환 & 시작 재설정 */}
       <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-2.5">
         <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide">서비스 모드 및 계정</h2>
         <button

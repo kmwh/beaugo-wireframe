@@ -75,7 +75,7 @@ export type AppState = {
   creatorCourses: Course[]
 }
 
-export const initialState: AppState = {
+export const richInitialState: AppState = {
   role: null,
   onboarded: false,
   learner: {
@@ -117,24 +117,115 @@ export const initialState: AppState = {
   },
   purchased: ['report', 'data', 'career', 'excel'],
   progress: {
-    'report-u1-v1': { position: 5, watched: true, quizDone: true },
+    // data 코스 (100% 완강 강좌): 4개 영상 모두 시청 완료 및 퀴즈 통과
     'data-u1-v1': { position: 5, watched: true, quizDone: true },
     'data-u1-v2': { position: 5, watched: true, quizDone: true },
     'data-u2-v1': { position: 5, watched: true, quizDone: true },
     'data-u2-v2': { position: 5, watched: true, quizDone: true },
+    // report 코스 (수강 중 강좌 ~29%): 1강 완료, 2강 진행 중
+    'report-u1-v1': { position: 5, watched: true, quizDone: true },
+    'report-u1-v2': { position: 2, watched: false, quizDone: false },
+    // career 코스 (수강 중 강좌 ~14% / 복습 퀴즈 필요): 1강 시청 완료, 퀴즈 오답
+    'career-u1-v1': { position: 5, watched: true, quizDone: false },
   },
-  likes: ['report-u1-v1', 'ot-excel'],
+  likes: ['report-u1-v1', 'ot-excel', 'data-u1-v1', 'ot-career'],
   notes: [
     {
       id: 'note-1',
       courseId: 'report',
       lessonId: 'report-u1-v1',
-      at: 2,
+      at: 120,
       segment: 0,
       text: '보고서의 첫 문장은 결론부터 두괄식으로 작성할 것.',
     },
+    {
+      id: 'note-2',
+      courseId: 'data',
+      lessonId: 'data-u1-v1',
+      at: 75,
+      segment: 1,
+      text: '핵심 지표(KPI) 설정 시 정량적 기준과 액션 플랜을 함께 명시하기.',
+    },
+    {
+      id: 'note-3',
+      courseId: 'data',
+      lessonId: 'data-u2-v1',
+      at: 180,
+      segment: 0,
+      text: '차트 시각화는 3색 이내로 단순화하여 가독성을 최우선으로 확보.',
+    },
+    {
+      id: 'note-4',
+      courseId: 'career',
+      lessonId: 'career-u1-v1',
+      at: 45,
+      segment: 0,
+      text: '포트폴리오 문제 해결 사례는 STAR(상황-과제-행동-결과) 기법 준수.',
+    },
   ],
   answers: [
+    // data 코스: 4개 영상 퀴즈 + 2개 유닛 퀴즈 + 최종 코스 퀴즈 모두 정답 (완강 강좌: 진도율 100%)
+    {
+      id: 'ans-data-u1-v1',
+      questionId: 'data-u1-v1-quiz',
+      courseId: 'data',
+      lessonId: 'data-u1-v1',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 86400000,
+    },
+    {
+      id: 'ans-data-u1-v2',
+      questionId: 'data-u1-v2-quiz',
+      courseId: 'data',
+      lessonId: 'data-u1-v2',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 82800000,
+    },
+    {
+      id: 'ans-data-u1',
+      questionId: 'data-unit-1',
+      courseId: 'data',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 79200000,
+    },
+    {
+      id: 'ans-data-u2-v1',
+      questionId: 'data-u2-v1-quiz',
+      courseId: 'data',
+      lessonId: 'data-u2-v1',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 75600000,
+    },
+    {
+      id: 'ans-data-u2-v2',
+      questionId: 'data-u2-v2-quiz',
+      courseId: 'data',
+      lessonId: 'data-u2-v2',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 72000000,
+    },
+    {
+      id: 'ans-data-u2',
+      questionId: 'data-unit-2',
+      courseId: 'data',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 68400000,
+    },
+    {
+      id: 'ans-data-final',
+      questionId: 'data-final',
+      courseId: 'data',
+      selected: 0,
+      correct: true,
+      at: Date.now() - 64800000,
+    },
+    // report 코스: 1강 퀴즈 정답, 최종 코스 퀴즈 정답 (수강 중 강좌: 진도율 29%)
     {
       id: 'ans-1',
       questionId: 'report-u1-v1-quiz',
@@ -144,7 +235,6 @@ export const initialState: AppState = {
       correct: true,
       at: Date.now() - 3600000,
     },
-    // report 코스 퀴즈 1문항 (정답 100점)
     {
       id: 'ans-report-final',
       questionId: 'report-final',
@@ -153,16 +243,16 @@ export const initialState: AppState = {
       correct: true,
       at: Date.now() - 7200000,
     },
-    // data 코스 퀴즈 1문항 (정답 100점)
+    // career 코스: 1강 퀴즈 오답(0점), 최종 코스 퀴즈 오답(0점) (복습 퀴즈/오답노트 대상)
     {
-      id: 'ans-data-final',
-      questionId: 'data-final',
-      courseId: 'data',
-      selected: 0,
-      correct: true,
-      at: Date.now() - 14400000,
+      id: 'ans-career-1',
+      questionId: 'career-u1-v1-quiz',
+      courseId: 'career',
+      lessonId: 'career-u1-v1',
+      selected: 1,
+      correct: false,
+      at: Date.now() - 25200000,
     },
-    // career 코스 퀴즈 1문항 (오답 0점)
     {
       id: 'ans-career-final',
       questionId: 'career-final',
@@ -174,6 +264,27 @@ export const initialState: AppState = {
   ],
   creatorCourses: initialCreatorCourses,
 }
+
+export const emptyInitialState: AppState = {
+  role: null,
+  onboarded: true,
+  learner: {
+    ...richInitialState.learner,
+    paymentMethods: [],
+    studyWindows: [],
+  },
+  creator: {
+    ...richInitialState.creator,
+  },
+  purchased: [],
+  progress: {},
+  likes: [],
+  notes: [],
+  answers: [],
+  creatorCourses: [],
+}
+
+export const initialState: AppState = richInitialState
 
 const key = 'baeugo-prototype-v3'
 
@@ -258,3 +369,20 @@ export function nextLearningItemId(course: Course, state: AppState): string | un
 export function hasWrongAnswer(state: AppState, lessonId: string): boolean {
   return state.answers.some(answer => answer.lessonId === lessonId && !answer.correct)
 }
+
+export function isCourseCompleted(course: Course, state: AppState): boolean {
+  return progressPercent(course, state) === 100
+}
+
+export function hasReviewQuiz(course: Course, state: AppState): boolean {
+  const courseQuiz = course.courseQuizzes?.[0] ?? course.finalQuestion
+  const answer = [...state.answers].reverse().find(a => a.questionId === courseQuiz.id)
+  return answer !== undefined && !answer.correct
+}
+
+export function resetDemoState(mode: 'rich' | 'empty'): AppState {
+  const next = mode === 'rich' ? { ...richInitialState } : { ...emptyInitialState }
+  saveState(next)
+  return next
+}
+

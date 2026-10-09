@@ -76,6 +76,8 @@ export function CreatorStudio({
   onDeleteCourse,
   onUpdateProfile,
   onSwitch,
+  isDemoEmpty,
+  onToggleDemoState,
 }: {
   profile: CreatorProfile
   courses: Course[]
@@ -85,6 +87,8 @@ export function CreatorStudio({
   onDeleteCourse: (courseId: string) => void
   onUpdateProfile: (profile: CreatorProfile) => void
   onSwitch: () => void
+  isDemoEmpty?: boolean
+  onToggleDemoState?: () => void
 }) {
   const [stage, setStage] = useState<Stage>('dashboard')
   const [manageCourseId, setManageCourseId] = useState<string | null>(null)
@@ -544,8 +548,8 @@ export function CreatorStudio({
     ? Math.round((answered.filter(answer => answer.correct).length / answered.length) * 100)
     : 0
 
-  // 일별 통계 목업 데이터 (이번 달 10.01 ~ 10.09)
-  const dailyStats = [
+  // 일별 통계 목업 데이터 (이번 달 10.01 ~ 10.09) - 빈 상태 지원
+  const dailyStats = courses.length === 0 ? [] : [
     { day: '10.01', label: '10월 1일', views: 110, students: 6, revenue: 174000 },
     { day: '10.02', label: '10월 2일', views: 135, students: 8, revenue: 232000 },
     { day: '10.03', label: '10월 3일', views: 98, students: 5, revenue: 145000 },
@@ -559,7 +563,7 @@ export function CreatorStudio({
   const totalViews = dailyStats.reduce((sum, item) => sum + item.views, 0)
   const totalStudents = dailyStats.reduce((sum, item) => sum + item.students, 0)
   const totalRevenue = dailyStats.reduce((sum, item) => sum + item.revenue, 0)
-  const selectedDay = dailyStats[selectedDayIdx] ?? dailyStats[dailyStats.length - 1]
+  const selectedDay = dailyStats.length > 0 ? (dailyStats[selectedDayIdx] ?? dailyStats[dailyStats.length - 1]) : null
 
   return (
     <main className="creator-shell mobile-shell">
@@ -592,14 +596,14 @@ export function CreatorStudio({
                 <strong className="text-2xl font-black text-amber-700 block mt-1">
                   {underReviewCount}
                 </strong>
-                <span className="text-[10px] text-amber-600">운영자 검수 대기</span>
+                <span className="text-xs text-amber-700 font-medium">운영자 검수 대기</span>
               </div>
               <div className="p-3 bg-emerald-50/60 border border-emerald-200/70 rounded-xl text-center">
                 <small className="text-emerald-800 font-bold block text-xs">등록 완료</small>
                 <strong className="text-2xl font-black text-emerald-700 block mt-1">
                   {publishedCount}
                 </strong>
-                <span className="text-[10px] text-emerald-600">수강생 공개 중</span>
+                <span className="text-xs text-emerald-700 font-medium">수강생 공개 중</span>
               </div>
             </div>
 
@@ -639,11 +643,11 @@ export function CreatorStudio({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                             {course.job}
                           </span>
                           <span
-                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            className={`text-xs font-semibold px-2 py-0.5 rounded ${
                               course.status === 'published'
                                 ? 'bg-emerald-100 text-emerald-700'
                                 : course.status === 'under_review'
@@ -671,7 +675,7 @@ export function CreatorStudio({
                     </div>
 
                     <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100 mt-2">
-                      <span className="text-[11px]">
+                      <span className="text-xs text-slate-500">
                         섹션 {course.units.length}개 · 영상 {totalLessons}편 · 수강생{' '}
                         {course.studentCount || 0}명
                       </span>
@@ -707,13 +711,13 @@ export function CreatorStudio({
                 <ArrowLeft />
               </button>
               <div className="text-center">
-                <span className="text-[11px] font-bold text-indigo-600">강좌 관리 & 검수</span>
+                <span className="text-xs font-bold text-indigo-600">강좌 관리 & 검수</span>
                 <h1 className="text-sm font-black text-slate-900 line-clamp-1">
                   {managingCourse.title}
                 </h1>
               </div>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
                   managingCourse.status === 'published'
                     ? 'bg-emerald-100 text-emerald-700'
                     : managingCourse.status === 'under_review'
@@ -889,7 +893,7 @@ export function CreatorStudio({
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        <span className="text-[10px] text-slate-400 block">
+                        <span className="text-xs text-slate-400 block">
                           영상 상태: {les.fileState.status === 'ready' ? '등록 완료' : '업로드 필요'} (
                           {les.duration}초)
                         </span>
@@ -915,7 +919,7 @@ export function CreatorStudio({
                         })
                         setManageSections(copy)
                       }}
-                      className="text-[11px] font-bold text-indigo-600 flex items-center gap-1 hover:underline pt-1"
+                      className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline pt-1"
                     >
                       <Plus className="w-3 h-3" /> 이 섹션에 영상 추가
                     </button>
@@ -963,7 +967,7 @@ export function CreatorStudio({
                     placeholder="객관식 문항 내용(질문)"
                   />
                   <div className="space-y-2 pt-1">
-                    <span className="text-[11px] font-bold text-slate-700 block">
+                    <span className="text-xs font-bold text-slate-700 block">
                       4지선다 보기 및 정답 지정 (A, B, C, D 카드를 눌러 정답 선택)
                     </span>
                     <div className="space-y-2">
@@ -1011,7 +1015,7 @@ export function CreatorStudio({
                                 copy[qIdx].correct = optIdx
                                 setManageQuizzes(copy)
                               }}
-                              className={`px-2 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1 transition-colors ${
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 transition-colors ${
                                 isCorrect
                                   ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
                                   : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200'
@@ -1053,7 +1057,7 @@ export function CreatorStudio({
                     <Sparkles className="w-4 h-4 text-indigo-600" />
                     <span>4. AI 생성 대본 & 문제별 퀴즈 검수 (목업)</span>
                   </h2>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-xs text-slate-500">
                     영상별 음성 추출 대본과 AI 퀴즈를 확인하고 검수/수정합니다.
                   </p>
                 </div>
@@ -1076,10 +1080,10 @@ export function CreatorStudio({
 
                   {/* 타임스탬프 대본 검수 */}
                   <div className="space-y-1">
-                    <span className="text-[11px] font-bold text-slate-700 block">타임스탬프 대본</span>
+                    <span className="text-xs font-bold text-slate-700 block">타임스탬프 대본</span>
                     {les.transcript.map((tr, trIdx) => (
                       <div key={trIdx} className="flex items-center gap-1 text-xs">
-                        <span className="font-mono text-[10px] text-indigo-600 bg-white px-1.5 py-1 rounded border border-slate-200">
+                        <span className="font-mono text-xs text-indigo-600 bg-white px-2 py-1 rounded border border-slate-200">
                           00:0{tr.start}
                         </span>
                         <input
@@ -1104,7 +1108,7 @@ export function CreatorStudio({
 
                   {/* AI 생성 퀴즈 검수 */}
                   <div className="space-y-1 pt-1 border-t border-slate-200">
-                    <span className="text-[11px] font-bold text-slate-700 block">
+                    <span className="text-xs font-bold text-slate-700 block">
                       AI 생성 영상별 퀴즈 (4지선다)
                     </span>
                     <input
@@ -1148,7 +1152,7 @@ export function CreatorStudio({
                                 }
                                 setManageSections(copy)
                               }}
-                              className={`w-5 h-5 rounded-full text-[10px] font-black shrink-0 flex items-center justify-center transition-colors ${
+                              className={`w-6 h-6 rounded-full text-xs font-black shrink-0 flex items-center justify-center transition-colors ${
                                 isCorrect
                                   ? 'bg-indigo-600 text-white'
                                   : 'bg-slate-100 text-slate-600 hover:bg-indigo-100'
@@ -1158,7 +1162,7 @@ export function CreatorStudio({
                               {String.fromCharCode(65 + optIdx)}
                             </button>
                             <input
-                              className="p-1 text-[11px] bg-transparent border-0 flex-1 min-w-0 outline-none"
+                              className="p-1 text-xs bg-transparent border-0 flex-1 min-w-0 outline-none"
                               value={opt}
                               onChange={e => {
                                 const copy = [...manageSections]
@@ -1202,7 +1206,7 @@ export function CreatorStudio({
                 <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200">
                   <div className="space-y-0.5">
                     <span className="text-xs font-bold text-slate-900 block">공개 설정</span>
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-xs text-slate-500">
                       수강자 탐색 피드 노출 여부를 토글합니다.
                     </span>
                   </div>
@@ -1229,7 +1233,7 @@ export function CreatorStudio({
                 <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between">
                   <div className="space-y-0.5">
                     <span className="text-xs font-bold text-amber-900 block">운영자 검수 진행 중</span>
-                    <span className="text-[11px] text-amber-700">검수 요청을 취소하고 임시저장으로 회수합니다.</span>
+                    <span className="text-xs text-amber-700">검수 요청을 취소하고 임시저장으로 회수합니다.</span>
                   </div>
                   <button
                     type="button"
@@ -1245,7 +1249,7 @@ export function CreatorStudio({
                 <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 space-y-2">
                   <div className="space-y-0.5">
                     <span className="text-xs font-bold text-rose-900 block">반려 사유 안내</span>
-                    <p className="text-[11px] text-rose-700 leading-relaxed">
+                    <p className="text-xs text-rose-700 leading-relaxed">
                       {managingCourse.rejectionReason ||
                         '2섹션 영상의 음질이 고르지 못하고, 퀴즈 해설 보강이 필요합니다.'}
                     </p>
@@ -1628,7 +1632,7 @@ export function CreatorStudio({
                                       copy[qIdx].correct = optIdx
                                       setCourseQuizzes(copy)
                                     }}
-                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1 transition-colors ${
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 transition-colors ${
                                       isCorrect
                                         ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
                                         : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200'
@@ -1702,254 +1706,312 @@ export function CreatorStudio({
             <div className="grid grid-cols-2 gap-2.5">
               {/* 1. 등록 강좌 건수 (전월 동기간 대비 증감) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   등록 강좌 건수
                 </span>
                 <strong className="text-xl font-black text-slate-900 block">
                   {courses.length}건
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+1건</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
-                  전월 동기간 대비 증감 (+1건)
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+1건</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>-</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
+                  전월 동기간 대비 증감 ({courses.length > 0 ? '+1건' : '0건'})
                 </small>
               </div>
 
               {/* 2. 영상 조회수 (전월 동기간 대비 증감률) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   영상 조회수
                 </span>
                 <strong className="text-xl font-black text-slate-900 block">
                   {totalViews.toLocaleString('ko-KR')}회
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+18.4%</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+18.4%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>0.0%</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
                   전월 동기간 대비 증감률
                 </small>
               </div>
 
               {/* 3. 수강자 수 (전월 동기간 대비 증감률) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   수강자 수
                 </span>
                 <strong className="text-xl font-black text-slate-900 block">
                   {totalStudents}명
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+24.7%</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+24.7%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>0.0%</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
                   전월 동기간 대비 증감률
                 </small>
               </div>
 
               {/* 4. 퀴즈 응답률 (전월 대비 증감률) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   퀴즈 응답률
                 </span>
                 <strong className="text-xl font-black text-slate-900 block">
-                  88.5%
+                  {courses.length > 0 ? '88.5%' : '0%'}
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+5.2%p</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+5.2%p</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>0.0%p</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
                   전월 대비 증감률
                 </small>
               </div>
 
               {/* 5. 퀴즈 정답률 (전월 대비 증감률) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   퀴즈 정답률
                 </span>
                 <strong className="text-xl font-black text-slate-900 block">
-                  {quizAccuracy > 0 ? `${quizAccuracy}%` : '79.4%'}
+                  {courses.length > 0 ? (quizAccuracy > 0 ? `${quizAccuracy}%` : '79.4%') : '0%'}
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+4.1%p</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+4.1%p</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>0.0%p</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
                   전월 대비 증감률
                 </small>
               </div>
 
               {/* 6. 예상 매출 (전월 동기간 대비 증감률) */}
               <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 block truncate">
+                <span className="text-xs font-bold text-slate-600 block truncate">
                   예상 매출
                 </span>
                 <strong className="text-lg font-black text-slate-900 block truncate">
-                  {won(estimatedRevenue > 0 ? estimatedRevenue : totalRevenue)}
+                  {won(courses.length > 0 ? (estimatedRevenue > 0 ? estimatedRevenue : totalRevenue) : 0)}
                 </strong>
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md w-fit">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>+28.5%</span>
-                </div>
-                <small className="text-[10px] text-slate-400 block pt-0.5 leading-tight">
+                {courses.length > 0 ? (
+                  <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>+28.5%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md w-fit">
+                    <span>0.0%</span>
+                  </div>
+                )}
+                <small className="text-xs text-slate-400 block pt-0.5 leading-tight">
                   전월 동기간 대비 증감률
                 </small>
               </div>
             </div>
 
             {/* 이번 달 일별 추이 그래프 섹션 (조회수, 수강자 수, 예상 매출 탭 전환) */}
-            <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 mt-4">
-              <div>
-                <h2 className="text-xs font-black text-slate-900 flex items-center gap-1.5 mb-0.5">
-                  <BarChart3 className="w-4 h-4 text-indigo-600" />
-                  <span>이번 달 일별 추이 그래프</span>
-                </h2>
-                <p className="text-[11px] text-slate-500 mb-0">
-                  {statsMetric === 'views'
-                    ? '영상 조회수 일별 추이 (10.01 ~ 10.09)'
-                    : statsMetric === 'students'
-                    ? '수강자 수 일별 추이 (10.01 ~ 10.09)'
-                    : '예상 매출 일별 추이 (10.01 ~ 10.09)'}
+            {dailyStats.length === 0 ? (
+              <div className="empty-box py-12 text-center mt-4">
+                <BarChart3 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <strong className="text-sm font-bold text-slate-700 block mb-1">
+                  집계된 일별 통계 데이터가 없습니다
+                </strong>
+                <p className="text-xs text-slate-500 mb-4">
+                  강좌를 개설하고 수강생이 유입되면 이번 달 일별 성장 추이 그래프가 제공됩니다.
                 </p>
-              </div>
-
-              {/* 탭 토글 버튼: 조회수 / 수강자 수 / 예상 매출 */}
-              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl">
                 <button
                   type="button"
-                  onClick={() => setStatsMetric('views')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
-                    statsMetric === 'views'
-                      ? 'bg-white text-indigo-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  onClick={() => {
+                    setCreateStep(1)
+                    setStage('create')
+                  }}
+                  className="secondary-button"
                 >
-                  조회수
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatsMetric('students')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
-                    statsMetric === 'students'
-                      ? 'bg-white text-indigo-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  수강자 수
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStatsMetric('revenue')}
-                  className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
-                    statsMetric === 'revenue'
-                      ? 'bg-white text-indigo-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  예상 매출
+                  새 강좌 개설하기
                 </button>
               </div>
-
-              {/* 선택된 날짜 상세 지표 카드 */}
-              {selectedDay && (
-                <div className="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between text-xs">
-                  <div>
-                    <span className="text-[10px] font-bold text-indigo-600 block">선택 일자</span>
-                    <strong className="text-slate-900">{selectedDay.label}</strong>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-500 block">
-                      {statsMetric === 'views'
-                        ? '당일 조회수'
-                        : statsMetric === 'students'
-                        ? '당일 신규 수강자'
-                        : '당일 예상 매출'}
-                    </span>
-                    <strong className="text-sm font-black text-indigo-700">
-                      {statsMetric === 'views'
-                        ? `${selectedDay.views.toLocaleString('ko-KR')}회`
-                        : statsMetric === 'students'
-                        ? `${selectedDay.students}명`
-                        : `${won(selectedDay.revenue)}`}
-                    </strong>
-                  </div>
+            ) : (
+              <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 mt-4">
+                <div>
+                  <h2 className="text-xs font-black text-slate-900 flex items-center gap-1.5 mb-0.5">
+                    <BarChart3 className="w-4 h-4 text-indigo-600" />
+                    <span>이번 달 일별 추이 그래프</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mb-0">
+                    {statsMetric === 'views'
+                      ? '영상 조회수 일별 추이 (10.01 ~ 10.09)'
+                      : statsMetric === 'students'
+                      ? '수강자 수 일별 추이 (10.01 ~ 10.09)'
+                      : '예상 매출 일별 추이 (10.01 ~ 10.09)'}
+                  </p>
                 </div>
-              )}
 
-              {/* 인터랙티브 바 차트 */}
-              <div className="pt-2">
-                <div className="h-36 flex items-end justify-between gap-1 pt-6 pb-1 px-1 border-b border-slate-200">
-                  {dailyStats.map((item, idx) => {
-                    const val =
+                {/* 탭 토글 버튼: 조회수 / 수강자 수 / 예상 매출 */}
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setStatsMetric('views')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
                       statsMetric === 'views'
-                        ? item.views
-                        : statsMetric === 'students'
-                        ? item.students
-                        : item.revenue
-                    const maxVal =
-                      statsMetric === 'views' ? 240 : statsMetric === 'students' ? 20 : 500000
-                    const heightPercent = Math.max(12, Math.min(100, Math.round((val / maxVal) * 100)))
-                    const isSelected = selectedDayIdx === idx
-
-                    return (
-                      <button
-                        key={item.day}
-                        type="button"
-                        onClick={() => setSelectedDayIdx(idx)}
-                        className="flex-1 flex flex-col items-center h-full justify-end group focus:outline-none"
-                      >
-                        {/* 상단 값 힌트 (선택 시 강조) */}
-                        <span
-                          className={`text-[9px] mb-1 transition-opacity ${
-                            isSelected
-                              ? 'opacity-100 text-indigo-700 font-black'
-                              : 'opacity-0 group-hover:opacity-100 text-slate-500 font-semibold'
-                          }`}
-                        >
-                          {statsMetric === 'views'
-                            ? item.views
-                            : statsMetric === 'students'
-                            ? item.students
-                            : `${Math.round(item.revenue / 10000)}만`}
-                        </span>
-
-                        {/* 막대 바 */}
-                        <div
-                          className={`w-full rounded-t-md transition-all ${
-                            isSelected
-                              ? 'bg-indigo-600 shadow-xs'
-                              : 'bg-indigo-200/80 group-hover:bg-indigo-400'
-                          }`}
-                          style={{ height: `${heightPercent}%` }}
-                        />
-                      </button>
-                    )
-                  })}
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    조회수
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatsMetric('students')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+                      statsMetric === 'students'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    수강자 수
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatsMetric('revenue')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
+                      statsMetric === 'revenue'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    예상 매출
+                  </button>
                 </div>
 
-                {/* X축 날짜 라벨 */}
-                <div className="flex justify-between gap-1 px-1 pt-1.5">
-                  {dailyStats.map((item, idx) => (
-                    <span
-                      key={item.day}
-                      className={`flex-1 text-center text-[10px] ${
-                        selectedDayIdx === idx
-                          ? 'font-black text-indigo-700'
-                          : 'text-slate-400 font-medium'
-                      }`}
-                    >
-                      {item.day.slice(3)}일
-                    </span>
-                  ))}
+                {/* 선택된 날짜 상세 지표 카드 */}
+                {selectedDay && (
+                  <div className="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-xs font-bold text-indigo-600 block">선택 일자</span>
+                      <strong className="text-slate-900">{selectedDay.label}</strong>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-slate-500 block">
+                        {statsMetric === 'views'
+                          ? '당일 조회수'
+                          : statsMetric === 'students'
+                          ? '당일 신규 수강자'
+                          : '당일 예상 매출'}
+                      </span>
+                      <strong className="text-sm font-black text-indigo-700">
+                        {statsMetric === 'views'
+                          ? `${selectedDay.views.toLocaleString('ko-KR')}회`
+                          : statsMetric === 'students'
+                          ? `${selectedDay.students}명`
+                          : `${won(selectedDay.revenue)}`}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+
+                {/* 인터랙티브 바 차트 */}
+                <div className="pt-2">
+                  <div className="h-36 flex items-end justify-between gap-1 pt-6 pb-1 px-1 border-b border-slate-200">
+                    {dailyStats.map((item, idx) => {
+                      const val =
+                        statsMetric === 'views'
+                          ? item.views
+                          : statsMetric === 'students'
+                          ? item.students
+                          : item.revenue
+                      const maxVal =
+                        statsMetric === 'views' ? 240 : statsMetric === 'students' ? 20 : 500000
+                      const heightPercent = Math.max(12, Math.min(100, Math.round((val / maxVal) * 100)))
+                      const isSelected = selectedDayIdx === idx
+
+                      return (
+                        <button
+                          key={item.day}
+                          type="button"
+                          onClick={() => setSelectedDayIdx(idx)}
+                          className="flex-1 flex flex-col items-center h-full justify-end group focus:outline-none"
+                        >
+                          {/* 상단 값 힌트 (선택 시 강조) */}
+                          <span
+                            className={`text-xs mb-1 transition-opacity ${
+                              isSelected
+                                ? 'opacity-100 text-indigo-700 font-black'
+                                : 'opacity-0 group-hover:opacity-100 text-slate-500 font-semibold'
+                            }`}
+                          >
+                            {statsMetric === 'views'
+                              ? item.views
+                              : statsMetric === 'students'
+                              ? item.students
+                              : `${Math.round(item.revenue / 10000)}만`}
+                          </span>
+
+                          {/* 막대 바 */}
+                          <div
+                            className={`w-full rounded-t-md transition-all ${
+                              isSelected
+                                ? 'bg-indigo-600 shadow-xs'
+                                : 'bg-indigo-200/80 group-hover:bg-indigo-400'
+                            }`}
+                            style={{ height: `${heightPercent}%` }}
+                          />
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* X축 날짜 라벨 */}
+                  <div className="flex justify-between gap-1 px-1 pt-1.5">
+                    {dailyStats.map((item, idx) => (
+                      <span
+                        key={item.day}
+                        className={`flex-1 text-center text-xs ${
+                          selectedDayIdx === idx
+                            ? 'font-black text-indigo-700'
+                            : 'text-slate-400 font-medium'
+                        }`}
+                      >
+                        {item.day.slice(3)}일
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
