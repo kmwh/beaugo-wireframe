@@ -1,4 +1,4 @@
-import { Course, initialCreatorCourses, demoCourses } from './demo-data'
+import { Course, Question, initialCreatorCourses, demoCourses } from './demo-data'
 
 export type Role = 'learner' | 'creator'
 export type StudyWindow = { id: string; start: string; end: string }
@@ -243,7 +243,7 @@ export const richInitialState: AppState = {
       correct: true,
       at: Date.now() - 7200000,
     },
-    // career 코스: 1강 퀴즈 오답(0점), 최종 코스 퀴즈 오답(0점) (복습 퀴즈/오답노트 대상)
+    // career 코스: 1강 퀴즈 오답(0점), 1섹션 퀴즈 오답(0점), 최종 코스 퀴즈 오답(0점) (세션 퀴즈 재출제/복습 퀴즈/오답노트 대상)
     {
       id: 'ans-career-1',
       questionId: 'career-u1-v1-quiz',
@@ -252,6 +252,14 @@ export const richInitialState: AppState = {
       selected: 1,
       correct: false,
       at: Date.now() - 25200000,
+    },
+    {
+      id: 'ans-career-u1',
+      questionId: 'career-unit-1',
+      courseId: 'career',
+      selected: 1,
+      correct: false,
+      at: Date.now() - 24000000,
     },
     {
       id: 'ans-career-final',
@@ -286,7 +294,7 @@ export const emptyInitialState: AppState = {
 
 export const initialState: AppState = richInitialState
 
-const key = 'baeugo-prototype-v3'
+const key = 'baeugo-prototype-v4'
 
 export function loadState(): AppState {
   try {
@@ -346,7 +354,7 @@ export function progressPercent(course: Course, state: AppState): number {
   const lessons = course.units.flatMap(unit => unit.lessons)
   if (lessons.length === 0) return 0
   const total = lessons.length + course.units.length + 1
-  const completedVideos = lessons.filter(lesson => state.progress[lesson.id]?.quizDone).length
+  const completedVideos = lessons.filter(lesson => state.progress[lesson.id]?.watched || state.progress[lesson.id]?.quizDone).length
   const completedUnits = course.units.filter(unit =>
     state.answers.some(answer => answer.questionId === unit.question.id)
   ).length
@@ -357,9 +365,16 @@ export function progressPercent(course: Course, state: AppState): number {
 export function nextLearningItemId(course: Course, state: AppState): string | undefined {
   for (const unit of course.units) {
     for (const lesson of unit.lessons) {
-      if (!state.progress[lesson.id]?.quizDone) return lesson.id
+      if (!state.progress[lesson.id]?.watched && !state.progress[lesson.id]?.quizDone) return lesson.id
     }
     if (!state.answers.some(answer => answer.questionId === unit.question.id)) return unit.question.id
+  }
+  // 세션 퀴즈를 틀렸고 아직 재출제를 풀지 않은 경우(답안 1건만 존재) 재출제 문항으로 이동
+  for (const unit of course.units) {
+    const unitAnswers = state.answers.filter(a => a.questionId === unit.question.id)
+    if (unitAnswers.length > 0 && !unitAnswers[0].correct && unitAnswers.length < 2) {
+      return `${unit.question.id}-retest`
+    }
   }
   if (!state.answers.some(answer => answer.questionId === course.finalQuestion.id))
     return course.finalQuestion.id
@@ -371,13 +386,48 @@ export function hasWrongAnswer(state: AppState, lessonId: string): boolean {
 }
 
 export function isCourseCompleted(course: Course, state: AppState): boolean {
-  return progressPercent(course, state) === 100
+  if (progressPercent(course, state) < 100) return false
+  const allQuizzes = [
+    ...course.units.map(u => u.question),
+    course.finalQuestion,
+    ...(course.courseQuizzes || []),
+  ]
+  const uniqueQuizzes = Array.from(new Map(allQuizzes.map(q => [q.id, q])).values())
+  // 수료 = 진도 100% + 미응시 0 + 오답 0
+  for (const q of uniqueQuizzes) {
+    const userAnswers = state.answers.filter(a => a.questionId === q.id)
+    if (userAnswers.length === 0) return false
+    const latest = userAnswers[userAnswers.length - 1]
+    if (!latest.correct) return false
+  }
+  return true
+}
+
+export function getWrongSessionQuizzes(course: Course, answers: AnswerRecord[]): Question[] {
+  const result: Question[] = []
+  for (const unit of course.units) {
+    const unitAnswers = answers.filter(a => a.questionId === unit.question.id)
+    if (unitAnswers.length > 0 && !unitAnswers[0].correct) {
+      const latest = unitAnswers[unitAnswers.length - 1]
+      if (!latest.correct) {
+        result.push(unit.question)
+      }
+    }
+  }
+  return result
 }
 
 export function hasReviewQuiz(course: Course, state: AppState): boolean {
-  const courseQuiz = course.courseQuizzes?.[0] ?? course.finalQuestion
-  const answer = [...state.answers].reverse().find(a => a.questionId === courseQuiz.id)
-  return answer !== undefined && !answer.correct
+  const courseQuizzes = course.courseQuizzes && course.courseQuizzes.length > 0 ? course.courseQuizzes : [course.finalQuestion]
+  for (const cq of courseQuizzes) {
+    const answer = [...state.answers].reverse().find(a => a.questionId === cq.id)
+    if (answer !== undefined && !answer.correct) return true
+  }
+  for (const unit of course.units) {
+    const unitAnswer = [...state.answers].reverse().find(a => a.questionId === unit.question.id)
+    if (unitAnswer !== undefined && !unitAnswer.correct) return true
+  }
+  return false
 }
 
 export function resetDemoState(mode: 'rich' | 'empty'): AppState {

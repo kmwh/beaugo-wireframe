@@ -7,7 +7,7 @@ import {
   Target, Trash2, UserRound, X,
 } from 'lucide-react'
 import { allLessons, demoCourses, interests, jobs, minutes, won, type Course, type Lesson, type Question } from '@/lib/demo-data'
-import { initialState, loadState, saveState, resetDemoState, progressPercent, nextLearningItemId, hasWrongAnswer, isCourseCompleted, hasReviewQuiz, type AppState, type Role, type Note, type StudyWindow, type PaymentMethod, type LearnerProfile } from '@/lib/app-state'
+import { initialState, loadState, saveState, resetDemoState, progressPercent, nextLearningItemId, hasWrongAnswer, isCourseCompleted, hasReviewQuiz, getWrongSessionQuizzes, type AppState, type Role, type Note, type StudyWindow, type PaymentMethod, type LearnerProfile } from '@/lib/app-state'
 import { readVideo } from '@/lib/blob-store'
 import { CreatorStudio } from '@/components/creator-studio'
 import { LearningFeed, type LearningQuizContext } from '@/components/learning-feed'
@@ -100,8 +100,30 @@ export default function BaeugoApp() {
       if (index < unit.lessons.length - 1) openLesson(course, unit.lessons[index + 1].id)
       else startQuiz({ kind: 'unit', courseId: course.id, unitIndex: context.unitIndex })
     } else if (context.kind === 'unit') {
-      if (context.unitIndex < course.units.length - 1) openLesson(course, course.units[context.unitIndex + 1].lessons[0].id)
-      else startQuiz({ kind: 'final', courseId: course.id, unitIndex: context.unitIndex })
+      if (context.unitIndex < course.units.length - 1) {
+        openLesson(course, course.units[context.unitIndex + 1].lessons[0].id)
+      } else {
+        const wrongUnits = course.units.filter(u => {
+          const uAns = data.answers.filter(a => a.questionId === u.question.id)
+          return uAns.length > 0 && !uAns[0].correct
+        })
+        if (wrongUnits.length > 0) {
+          startQuiz({ kind: 'retest', courseId: course.id, unitIndex: 0, questionId: wrongUnits[0].question.id, isRetest: true })
+        } else {
+          startQuiz({ kind: 'final', courseId: course.id, unitIndex: context.unitIndex })
+        }
+      }
+    } else if (context.kind === 'retest') {
+      const wrongUnits = course.units.filter(u => {
+        const uAns = data.answers.filter(a => a.questionId === u.question.id)
+        return uAns.length > 0 && !uAns[0].correct
+      })
+      const currentIdx = wrongUnits.findIndex(u => u.question.id === context.questionId)
+      if (currentIdx !== -1 && currentIdx < wrongUnits.length - 1) {
+        startQuiz({ kind: 'retest', courseId: course.id, unitIndex: currentIdx + 1, questionId: wrongUnits[currentIdx + 1].question.id, isRetest: true })
+      } else {
+        startQuiz({ kind: 'final', courseId: course.id, unitIndex: course.units.length - 1 })
+      }
     } else { setCourseId(course.id); setScreen('detail'); setMessage('코스 종합 퀴즈를 마쳤습니다. 보관함에서 점수와 퀴즈를 다시 볼 수 있어요.') }
   }
   function handleLogout() {
@@ -177,14 +199,33 @@ export default function BaeugoApp() {
         update(current => ({ ...current, role: 'learner' }))
         setScreen('home')
       }}
+      onLogout={handleLogout}
     />
   )
-  if (screen === 'lesson') return <LearningFeed key={`${selectedCourse.id}-${lessonId}`} course={selectedCourse} startId={lessonId} notes={data.notes} likes={data.likes} answers={data.answers} onLike={toggleLike} onNote={saveNote} onProgress={saveProgress} onWatched={markVideoWatched} onAnswer={submitAnswer} onBack={() => setScreen('detail')} onComplete={() => { setScreen('detail'); setMessage('강좌 학습을 마쳤습니다. 오답과 메모는 보관함에서 복습할 수 있어요.') }} />
+  if (screen === 'lesson') return (
+    <LearningFeed
+      key={`${selectedCourse.id}-${lessonId}`}
+      course={selectedCourse}
+      startId={lessonId}
+      notes={data.notes}
+      likes={data.likes}
+      answers={data.answers}
+      onLike={toggleLike}
+      onNote={saveNote}
+      onProgress={saveProgress}
+      onWatched={markVideoWatched}
+      onAnswer={submitAnswer}
+      onBack={() => setScreen('detail')}
+      onComplete={() => { setScreen('detail'); setMessage('강좌 학습을 마쳤습니다. 오답과 메모는 보관함에서 복습할 수 있어요.') }}
+      onGoToReview={() => { setLibraryTab('quiz'); setScreen('library') }}
+    />
+  )
   if (screen === 'quiz' && quizContext) {
     const course = courses.find(item => item.id === quizContext.courseId) ?? selectedCourse
     const question =
       quizContext.questionId
-        ? (course.courseQuizzes?.find(q => q.id === quizContext.questionId) ??
+        ? (course.units.find(u => u.question.id === quizContext.questionId)?.question ??
+           course.courseQuizzes?.find(q => q.id === quizContext.questionId) ??
            allLessons(course).find(item => item.id === quizContext.lessonId)?.question ??
            course.finalQuestion)
         : quizContext.kind === 'video'
@@ -239,12 +280,12 @@ export default function BaeugoApp() {
           question={courseQuizTarget.question}
           answers={data.answers}
           onBack={() => setScreen('library')}
-          onSubmitAnswer={(selected, correct) => {
+          onSubmitAnswer={(q, selected, correct) => {
             submitAnswer(
-              { kind: 'course-quiz', courseId: courseQuizTarget.course.id, unitIndex: 0, questionId: courseQuizTarget.question.id },
+              { kind: 'course-quiz', courseId: courseQuizTarget.course.id, unitIndex: 0, questionId: q.id },
               selected,
               correct,
-              courseQuizTarget.question
+              q
             )
           }}
         />
@@ -312,22 +353,21 @@ function Onboarding({ role, onBack, onComplete }: { role: Role; onBack: () => vo
   const [status, setStatus] = useState('')
   const [job, setJob] = useState('')
   const [topics, setTopics] = useState<string[]>([])
-  const [studyWindows, setStudyWindows] = useState<StudyWindow[]>([])
   const [bio, setBio] = useState('')
   const isCreator = role === 'creator'
   const titles = isCreator
-    ? ['전문 직무를 알려 주세요', '강의 키워드를 선택해 주세요', '강사 약력을 입력해 주세요']
-    : ['현재 어떤 상황인가요?', '현재 또는 희망 직무는?', '관심 주제를 선택해 주세요', '학습 시간대를 정해요']
+    ? ['전문 직무를 알려 주세요', '주제를 선택해 주세요', '강사 약력을 입력해 주세요']
+    : ['현재 어떤 상황인가요?', '현재 또는 희망 직무는?', '주제를 선택해 주세요']
   const total = titles.length
   const canContinue = isCreator
     ? step === 0 ? Boolean(job) : step === 1 ? topics.length > 0 : bio.trim().length >= 5
-    : step === 0 ? Boolean(status) : step === 1 ? Boolean(job) : step === 2 ? topics.length > 0 : validStudyWindows(studyWindows)
+    : step === 0 ? Boolean(status) : step === 1 ? Boolean(job) : topics.length > 0
   const toggleTopic = (value: string) => setTopics(current => current.includes(value) ? current.filter(item => item !== value) : [...current, value])
   function next() {
     if (!canContinue) return
     if (step < total - 1) setStep(step + 1)
     else if (isCreator) onComplete({ creator: { ...initialState.creator, job, keywords: topics, bio } })
-    else onComplete({ learner: { ...initialState.learner, status, job, interests: topics, studyWindows: [...studyWindows].sort((a, b) => a.start.localeCompare(b.start)) } })
+    else onComplete({ learner: { ...initialState.learner, status, job, interests: topics, studyWindows: [] } })
   }
   return (
     <main className="onboarding mobile-shell">
@@ -341,7 +381,7 @@ function Onboarding({ role, onBack, onComplete }: { role: Role; onBack: () => vo
         <span style={{ width: `${(step + 1) / total * 100}%` }} />
       </div>
       <section className="onboarding-body">
-        <p className="eyebrow">{isCreator ? '강의자 시작하기' : '나에게 맞는 학습'}</p>
+        <p className="eyebrow">{isCreator ? '강사 시작하기' : '나에게 맞는 학습'}</p>
         <h1>{titles[step]}</h1>
         {!isCreator && step === 0 && (
           <div className="option-stack">
@@ -372,9 +412,6 @@ function Onboarding({ role, onBack, onComplete }: { role: Role; onBack: () => vo
               ))}
             </div>
           </>
-        )}
-        {!isCreator && step === 3 && (
-          <StudyPlanFields windows={studyWindows} setWindows={setStudyWindows} />
         )}
         {isCreator && step === 2 && (
           <label className="form-stack">
@@ -430,8 +467,28 @@ function AppShell({
 }) {
   return (
     <div className="app-frame mobile-shell">
-      <header className="app-header">
+      <header className="app-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <button className="logo" onClick={() => onNavigate('home')}>BAEUGO</button>
+        {onToggleDemoState && (
+          <button
+            type="button"
+            onClick={onToggleDemoState}
+            style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '3px 8px',
+              borderRadius: '9999px',
+              border: isDemoEmpty ? '1px solid #fcd34d' : '1px solid #c7d2fe',
+              background: isDemoEmpty ? '#fef3c7' : '#eef2ff',
+              color: isDemoEmpty ? '#92400e' : '#4338ca',
+              cursor: 'pointer',
+              lineHeight: 1.2,
+            }}
+            title="정상 Mock 데이터와 빈 상태(Empty State) 전환"
+          >
+            {isDemoEmpty ? '빈 상태' : 'Mock 모드'}
+          </button>
+        )}
       </header>
       <div className={screen === 'home' ? 'app-content home-content' : 'app-content'}>
         {children}
@@ -494,7 +551,7 @@ function HomeScreen({
                 </div>
                 <div>
                   <strong>{course.title}</strong>
-                  <small>{nextLearningItemId(course, data) ? '이어갈 학습이 있어요' : '코스 학습 완료'}</small>
+                  <small>{isCourseCompleted(course, data) ? '수료' : nextLearningItemId(course, data) ? '이어갈 학습이 있어요' : '학습 진행 중'}</small>
                   <small>메모 {data.notes.filter(note => note.courseId === course.id).length} · 퀴즈 참여 {data.answers.filter(answer => answer.courseId === course.id).length}건</small>
                 </div>
               </button>
@@ -561,7 +618,7 @@ function OTSlide({ course, index, total, liked, onLike, onCourse }: { course: Co
           <Heart fill={liked ? 'currentColor' : 'none'} />
         </button>
       </div>
-      {/* OT 하단: 상세 설명에 강의자 프로필(사진, 이름, 약력) 표시 */}
+      {/* OT 하단: 상세 설명에 강사 프로필(사진, 이름, 약력) 표시 */}
       <div className="ot-bottom">
         <span className="tag dark">{course.job} · {course.level}</span>
         <h2>{course.title}</h2>
@@ -664,7 +721,7 @@ function SearchScreen({ courses, query, setQuery, onBack, onCourse }: { courses:
       <div className="search-input">
         <button className="icon-only" onClick={onBack} aria-label="뒤로"><ArrowLeft /></button>
         <Search />
-        <input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="제목·태그·대본 검색" />
+        <input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="직무·주제·강좌 검색" />
         <button className="icon-only" onClick={() => setQuery('')} aria-label="검색어 지우기"><X /></button>
       </div>
 
@@ -793,15 +850,15 @@ function CourseDetail({ course, data, hasAccess, onBack, onOt, onBuy, onResume, 
           <h2>강좌 목차</h2>
           <span>{allLessons(course).length}개 영상</span>
         </div>
-        {course.units.map((unit, unitIndex) => (
+        {course.units.map(unit => (
           <div className="unit" key={unit.id}>
-            <h3>{unitIndex + 1}. {unit.title}</h3>
+            <h3>{unit.title}</h3>
             {unit.lessons.map((lesson, index) => (
               <button className="lesson-row" key={lesson.id} onClick={() => hasAccess ? onLesson(lesson.id) : onBuy()}>
                 <span className="lesson-number">{index + 1}</span>
                 <span>
                   <strong>{lesson.title}</strong>
-                  <small>영상별 퀴즈 · {data.notes.filter(note => note.lessonId === lesson.id).length}개 메모 {hasWrongAnswer(data, lesson.id) ? '· 오답 있음' : ''}</small>
+                  <small>{lesson.duration}분 · 메모 {data.notes.filter(note => note.lessonId === lesson.id).length}개{hasWrongAnswer(data, lesson.id) ? ' · 오답 있음' : ''}</small>
                 </span>
                 {hasAccess ? <Play /> : <LockKeyhole />}
               </button>
@@ -809,7 +866,14 @@ function CourseDetail({ course, data, hasAccess, onBack, onOt, onBuy, onResume, 
             <div className="unit-quiz-label"><Sparkles /> 단위 확인 퀴즈</div>
           </div>
         ))}
-        <div className="unit-quiz-label"><Sparkles /> 코스 종합 퀴즈</div>
+        {(() => {
+          const wrongUnits = getWrongSessionQuizzes(course, data.answers)
+          return (
+            <div className="unit-quiz-label">
+              <Sparkles /> 코스 종합 퀴즈 (강사 직접 출제{wrongUnits.length > 0 ? ` · 세션 오답 ${wrongUnits.length}문항 재출제 포함` : ''})
+            </div>
+          )
+        })()}
       </div>
       <div className="sticky-action">
         <button className="primary-button" onClick={hasAccess ? onResume : onBuy}>
@@ -823,26 +887,62 @@ function CourseDetail({ course, data, hasAccess, onBack, onOt, onBuy, onResume, 
 function QuizScreen({ context, question, onSubmit, onNext, onBack }: { context: QuizContext; question: Question; onSubmit: (answer: number, correct: boolean) => void; onNext: () => void; onBack: () => void }) {
   const [selection, setSelection] = useState<number | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const correct = selection === question.correct
+  const isRetest = context.kind === 'retest' || Boolean(context.isRetest)
+  const isCourseQuiz = context.kind === 'final' || context.kind === 'course-quiz' || isRetest
+
+  function handleSubmit() {
+    if (selection === null) return
+    const isCorrect = selection === question.correct
+    onSubmit(selection, isCorrect)
+    setSubmitted(true)
+  }
+
+  function handleRetry() {
+    setSelection(null)
+    setSubmitted(false)
+    setRetryCount(1)
+  }
 
   return (
     <main className="quiz-screen mobile-shell">
       <div className="quiz-head">
         <button className="icon-only" onClick={onBack} aria-label="뒤로"><ArrowLeft /></button>
         <span>
-          {context.kind === 'video'
-            ? '영상별 확인 퀴즈'
-            : context.kind === 'unit'
-            ? '학습 단위 확인 퀴즈'
+          {isRetest
+            ? '코스 종합 퀴즈 (세션 오답 재출제)'
+            : context.kind === 'video' || context.kind === 'unit'
+            ? '단위 확인 퀴즈'
             : context.kind === 'course-quiz'
-            ? '코스 퀴즈 재시험'
+            ? '코스 퀴즈'
             : '코스 종합 퀴즈'}
         </span>
       </div>
       <div className="quiz-body">
-        <span className="tag blue"><Sparkles /> 대본 기반 · 강의자 검수</span>
+        <span className="tag blue">
+          <Sparkles /> {isRetest ? '세션 퀴즈 오답 재출제 (코스 종합 퀴즈)' : isCourseQuiz ? '강사 직접 출제' : '대본 기반 · 강사 검수'}
+        </span>
+        {isRetest && (
+          <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs font-bold text-amber-800 mb-2">
+            <span className="flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> 세션 퀴즈 오답 재출제</span>
+            <span className="text-amber-600 font-semibold">코스 종합 퀴즈 반영</span>
+          </div>
+        )}
+        {isCourseQuiz && !isRetest && retryCount === 1 && (
+          <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs font-bold text-amber-800 mb-2">
+            <span className="flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> 오답 1회 재출제 진행 중</span>
+            <span className="text-amber-600 font-semibold">재도전 기회</span>
+          </div>
+        )}
         <h1>{question.prompt}</h1>
-        <p className="muted">학습한 핵심 내용을 떠올려 답안을 선택해 주세요.</p>
+        <p className="muted">
+          {isRetest
+            ? '이전에 세션 퀴즈에서 틀렸던 문제입니다. 코스 종합 퀴즈에서 다시 풀어보세요.'
+            : isCourseQuiz && retryCount === 1
+            ? '오답 1회 재출제 기회입니다. 올바른 정답을 선택해 주세요.'
+            : '학습한 핵심 내용을 떠올려 답안을 선택해 주세요.'}
+        </p>
         <div className="answer-list">
           {question.options.map((option, index) => (
             <button
@@ -857,15 +957,25 @@ function QuizScreen({ context, question, onSubmit, onNext, onBack }: { context: 
         </div>
         {submitted && (
           <div className={correct ? 'answer-feedback good' : 'answer-feedback'}>
-            <strong>{correct ? '정답이에요!' : '오답노트 및 결과에 저장했어요'}</strong>
+            <strong>
+              {correct
+                ? '정답이에요!'
+                : isCourseQuiz && retryCount === 0
+                ? '오답입니다 (1회 재출제 기회 제공)'
+                : '오답노트 및 결과에 저장했어요'}
+            </strong>
             <p>{question.explanation}</p>
           </div>
         )}
       </div>
       <div className="quiz-bottom">
         {!submitted ? (
-          <button className="primary-button" disabled={selection === null} onClick={() => { if (selection !== null) { onSubmit(selection, correct); setSubmitted(true) } }}>
-            답안 제출하기
+          <button className="primary-button" disabled={selection === null} onClick={handleSubmit}>
+            {retryCount === 1 ? '재출제 답안 제출하기' : '답안 제출하기'}
+          </button>
+        ) : isCourseQuiz && !correct && retryCount === 0 ? (
+          <button className="primary-button" onClick={handleRetry}>
+            <RotateCcw className="w-4 h-4 mr-1" /> 틀린 문제 다시 풀기 (1회)
           </button>
         ) : (
           <button className="primary-button" onClick={onNext}>
@@ -909,8 +1019,8 @@ function LibraryScreen({
   const [quizFilter, setQuizFilter] = useState<'all' | 'passed' | 'review' | 'unattempted'>('all')
 
   const enrolled = courses.filter(course => data.purchased.includes(course.id))
-  const inProgressCourses = enrolled.filter(course => progressPercent(course, data) < 100)
-  const completedCourses = enrolled.filter(course => progressPercent(course, data) === 100)
+  const inProgressCourses = enrolled.filter(course => !isCourseCompleted(course, data))
+  const completedCourses = enrolled.filter(course => isCourseCompleted(course, data))
   const displayedCourses = courseFilter === 'all' ? enrolled : courseFilter === 'in_progress' ? inProgressCourses : completedCourses
 
   const findCourse = (id: string) => courses.find(course => course.id === id)
@@ -921,16 +1031,18 @@ function LibraryScreen({
   const quizItems = coursesForQuizzes.map(course => {
     const courseQuiz = course.courseQuizzes?.[0] ?? course.finalQuestion
     const answer = [...data.answers].reverse().find(a => a.questionId === courseQuiz.id)
-    return { course, courseQuiz, answer }
+    const wrongSessionQuizzes = getWrongSessionQuizzes(course, data.answers)
+    const isReviewNeeded = hasReviewQuiz(course, data)
+    return { course, courseQuiz, answer, wrongSessionQuizzes, isReviewNeeded }
   })
-  const passedQuizCount = quizItems.filter(item => item.answer?.correct === true).length
-  const reviewQuizCount = quizItems.filter(item => item.answer !== undefined && !item.answer.correct).length
-  const unattemptedQuizCount = quizItems.filter(item => item.answer === undefined).length
+  const passedQuizCount = quizItems.filter(item => item.answer?.correct === true && item.wrongSessionQuizzes.length === 0).length
+  const reviewQuizCount = quizItems.filter(item => item.isReviewNeeded).length
+  const unattemptedQuizCount = quizItems.filter(item => item.answer === undefined && item.wrongSessionQuizzes.length === 0).length
 
   const filteredQuizItems = quizItems.filter(item => {
-    if (quizFilter === 'passed') return item.answer?.correct === true
-    if (quizFilter === 'review') return item.answer !== undefined && !item.answer.correct
-    if (quizFilter === 'unattempted') return item.answer === undefined
+    if (quizFilter === 'passed') return item.answer?.correct === true && item.wrongSessionQuizzes.length === 0
+    if (quizFilter === 'review') return item.isReviewNeeded
+    if (quizFilter === 'unattempted') return item.answer === undefined && item.wrongSessionQuizzes.length === 0
     return true
   })
 
@@ -942,7 +1054,7 @@ function LibraryScreen({
         <p className="muted">학습 기록과 저장한 내용을 다시 볼 수 있어요.</p>
         {data.creator.bio && (
           <button className="text-link" onClick={onCreator}>
-            강의자 화면으로 돌아가기 <ChevronRight />
+            강사 화면으로 돌아가기 <ChevronRight />
           </button>
         )}
       </div>
@@ -956,7 +1068,7 @@ function LibraryScreen({
       </div>
 
       <div className="library-list">
-        {/* 1. 내 강좌 탭 (전체 / 수강 중 / 완강 서브 필터) */}
+        {/* 1. 내 강좌 탭 (전체 / 수강 중 / 수료 서브 필터) */}
         {tab === 'courses' && enrolled.length > 0 && (
           <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
             <button
@@ -990,13 +1102,13 @@ function LibraryScreen({
               }`}
               onClick={() => setCourseFilter('completed')}
             >
-              완강 ({completedCourses.length})
+              수료 ({completedCourses.length})
             </button>
           </div>
         )}
 
         {tab === 'courses' && displayedCourses.map(course => {
-          const isCompleted = progressPercent(course, data) === 100
+          const isCompleted = isCourseCompleted(course, data)
           return (
             <button className="library-item" key={course.id} onClick={() => onCourse(course)}>
               <span className="library-cover" style={{ backgroundImage: `url(${course.cover})` }} />
@@ -1007,7 +1119,7 @@ function LibraryScreen({
                       isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-50 text-indigo-700'
                     }`}
                   >
-                    {isCompleted ? '완강' : '수강 중'}
+                    {isCompleted ? '수료' : '수강 중'}
                   </span>
                   <strong>{course.title}</strong>
                 </div>
@@ -1021,7 +1133,7 @@ function LibraryScreen({
         {tab === 'courses' && enrolled.length > 0 && displayedCourses.length === 0 && (
           <div className="empty-box">
             {courseFilter === 'completed'
-              ? '완강한 강좌가 아직 없습니다. 수강 중인 강좌를 계속 학습해 보세요!'
+              ? '수료한 강좌가 아직 없습니다. 수강 중인 강좌를 계속 학습해 보세요!'
               : '수강 중인 강좌가 없습니다.'}
           </div>
         )}
@@ -1111,7 +1223,7 @@ function LibraryScreen({
 
         {tab === 'quiz' && (
           <div className="space-y-3 w-full">
-            {filteredQuizItems.map(({ course, courseQuiz, answer }) => {
+            {filteredQuizItems.map(({ course, courseQuiz, answer, wrongSessionQuizzes }) => {
               return (
                 <button
                   key={course.id}
@@ -1125,21 +1237,26 @@ function LibraryScreen({
                       style={{ backgroundImage: `url(${course.cover})` }}
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 mb-1">
+                      <div className="flex items-center gap-1.5 mb-1 flex-wrap">
                         <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
                           코스 퀴즈
                         </span>
+                        {wrongSessionQuizzes.length > 0 && (
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                            <RotateCcw className="w-3 h-3" /> 세션 오답 {wrongSessionQuizzes.length}문항 재출제
+                          </span>
+                        )}
                         {answer === undefined ? (
                           <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                             미응시
                           </span>
-                        ) : answer.correct ? (
+                        ) : answer.correct && wrongSessionQuizzes.length === 0 ? (
                           <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 flex items-center gap-0.5">
                             <Check className="w-3.5 h-3.5" /> 100점 (정답)
                           </span>
                         ) : (
                           <span className="text-xs font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-700 flex items-center gap-0.5">
-                            <X className="w-3.5 h-3.5" /> 0점 (오답/복습 필요)
+                            <X className="w-3.5 h-3.5" /> {answer.correct ? '세션 오답 복습 필요' : '0점 (오답/복습 필요)'}
                           </span>
                         )}
                       </div>
@@ -1147,7 +1264,9 @@ function LibraryScreen({
                         {course.title}
                       </strong>
                       <p className="text-xs text-slate-500 truncate mb-0 mt-0.5">
-                        {courseQuiz.prompt}
+                        {wrongSessionQuizzes.length > 0
+                          ? `세션 퀴즈 오답 ${wrongSessionQuizzes.length}문항 재출제 포함 · ${courseQuiz.prompt}`
+                          : courseQuiz.prompt}
                       </p>
                     </div>
                   </div>
@@ -1190,22 +1309,75 @@ function CourseQuizScreen({
   question: Question
   answers: AppState['answers']
   onBack: () => void
-  onSubmitAnswer: (selected: number, correct: boolean) => void
+  onSubmitAnswer: (question: Question, selected: number, correct: boolean) => void
 }) {
-  const latestAnswer = useMemo(
-    () => [...answers].reverse().find(a => a.questionId === question.id),
-    [answers, question.id]
-  )
+  const wrongSessionQuizzes = useMemo(() => {
+    const list: { question: Question; unitTitle: string }[] = []
+    const wrong = getWrongSessionQuizzes(course, answers)
+    wrong.forEach(q => {
+      const unit = course.units.find(u => u.question.id === q.id)
+      list.push({ question: q, unitTitle: unit?.title ?? '세션 퀴즈' })
+    })
+    return list
+  }, [course, answers])
 
+  const comprehensiveQuestions = useMemo(() => {
+    if (course.courseQuizzes && course.courseQuizzes.length > 0) {
+      return course.courseQuizzes
+    }
+    return [question || course.finalQuestion]
+  }, [course, question])
+
+  const quizQuestions = useMemo(() => {
+    const items: { question: Question; isSessionRetest: boolean; unitTitle?: string }[] = []
+    wrongSessionQuizzes.forEach(item => {
+      items.push({ question: item.question, isSessionRetest: true, unitTitle: item.unitTitle })
+    })
+    comprehensiveQuestions.forEach(q => {
+      items.push({ question: q, isSessionRetest: false })
+    })
+    return items
+  }, [wrongSessionQuizzes, comprehensiveQuestions])
+
+  const [activeQuestions, setActiveQuestions] = useState<{ question: Question; isSessionRetest: boolean; unitTitle?: string }[]>([])
   const [mode, setMode] = useState<'decision' | 'testing' | 'result'>('decision')
+  const [currentIdx, setCurrentIdx] = useState(0)
   const [selectedOption, setSelectedOption] = useState<number | null>(null)
   const [currentResult, setCurrentResult] = useState<{ selected: number; correct: boolean } | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const [sessionResults, setSessionResults] = useState<{ question: Question; selected: number; correct: boolean; isSessionRetest: boolean }[]>([])
 
-  const isAlreadyTested = latestAnswer !== undefined
+  const effectiveQuestions = mode === 'decision' ? quizQuestions : activeQuestions
+  const currentItem = effectiveQuestions[currentIdx] ?? effectiveQuestions[0]
+  const currentQ = currentItem.question
+
+  const anyTested = useMemo(() => {
+    return quizQuestions.some(item => answers.some(a => a.questionId === item.question.id))
+  }, [quizQuestions, answers])
+
+  function handleStartQuiz() {
+    setActiveQuestions(quizQuestions)
+    setCurrentIdx(0)
+    setSelectedOption(null)
+    setCurrentResult(null)
+    setRetryCount(0)
+    setSessionResults([])
+    setMode('testing')
+  }
+
+  function handleNextQuestion() {
+    if (currentIdx < activeQuestions.length - 1) {
+      setCurrentIdx(prev => prev + 1)
+      setSelectedOption(null)
+      setCurrentResult(null)
+      setRetryCount(0)
+    } else {
+      setMode('result')
+    }
+  }
 
   return (
     <main className="quiz-screen mobile-shell bg-slate-50 min-h-screen flex flex-col justify-between">
-      {/* Quiz Head */}
       <div>
         <div className="quiz-head flex items-center justify-between pb-3 border-b border-slate-100">
           <button
@@ -1222,7 +1394,11 @@ function CourseQuizScreen({
             <ArrowLeft />
           </button>
           <span className="font-bold text-slate-800 text-xs">
-            {mode === 'testing' ? '코스 퀴즈 풀기' : mode === 'result' ? '퀴즈 채점 결과' : '코스 퀴즈'}
+            {mode === 'testing'
+              ? `코스 퀴즈 풀기 (${currentIdx + 1}/${activeQuestions.length})`
+              : mode === 'result'
+              ? '퀴즈 채점 결과'
+              : '코스 퀴즈'}
           </span>
           <div className="w-11" />
         </div>
@@ -1246,243 +1422,325 @@ function CourseQuizScreen({
           {/* 1. 재시험 여부 선택 화면 (mode === 'decision') */}
           {mode === 'decision' && (
             <div className="space-y-4">
-              {isAlreadyTested ? (
-                <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-2xs">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                    <span className="text-xs font-bold text-slate-600">이전 응시 기록</span>
-                    {latestAnswer.correct ? (
-                      <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
-                        <Check className="w-3.5 h-3.5" /> 100점 (정답)
-                      </span>
-                    ) : (
-                      <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 flex items-center gap-1">
-                        <X className="w-3.5 h-3.5" /> 0점 (오답)
-                      </span>
-                    )}
+              {wrongSessionQuizzes.length > 0 && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl space-y-1.5 shadow-2xs">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                    <RotateCcw className="w-4 h-4 text-amber-600" />
+                    <span>세션 퀴즈 오답 재출제 포함 ({wrongSessionQuizzes.length}문항)</span>
                   </div>
-
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
-                    <strong className="text-xs font-bold text-slate-800 block">
-                      Q. {question.prompt}
-                    </strong>
-                    <div className="text-xs text-slate-600 space-y-1">
-                      <div className="flex items-start gap-1.5">
-                        <span className="text-xs font-bold text-slate-500 shrink-0">제출했던 답안:</span>
-                        <span className={latestAnswer.correct ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
-                          {question.options[latestAnswer.selected]}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-xs text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200/60 mt-1">
-                      <strong className="text-slate-800 block mb-0.5">정답 및 해설</strong>
-                      {question.explanation}
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-center space-y-1">
-                    <p className="text-xs font-bold text-indigo-900 mb-0">
-                      이미 응시한 코스 퀴즈입니다.
-                    </p>
-                    <p className="text-xs text-indigo-700 mb-0">
-                      재시험에 응시하시면 점수가 새로 반영됩니다. 재시험을 보시겠습니까?
-                    </p>
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <button
-                      type="button"
-                      className="primary-button full"
-                      onClick={() => {
-                        setSelectedOption(null)
-                        setMode('testing')
-                      }}
-                    >
-                      <RotateCcw className="w-4 h-4 mr-1" /> 재시험 응시하기
-                    </button>
-                    <button
-                      type="button"
-                      className="outline-button full"
-                      onClick={onBack}
-                    >
-                      보관함으로 돌아가기
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* 미응시 상태 */
-                <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-4 shadow-2xs">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                    <span className="text-xs font-bold text-slate-600">퀴즈 상태</span>
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-                      미응시
-                    </span>
-                  </div>
-
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
-                    <span className="tag blue">
-                      <Sparkles className="w-3 h-3" /> 코스 종합 확인 문제
-                    </span>
-                    <strong className="text-xs font-bold text-slate-800 block pt-1">
-                      Q. {question.prompt}
-                    </strong>
-                    <p className="text-xs text-slate-500">
-                      코스 완강 후 학습 내용을 총괄 점검하는 1문항 코스 퀴즈입니다.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <button
-                      type="button"
-                      className="primary-button full"
-                      onClick={() => {
-                        setSelectedOption(null)
-                        setMode('testing')
-                      }}
-                    >
-                      퀴즈 응시하기 <ChevronRight className="w-4 h-4 ml-1" />
-                    </button>
-                    <button
-                      type="button"
-                      className="outline-button full"
-                      onClick={onBack}
-                    >
-                      보관함으로 돌아가기
-                    </button>
-                  </div>
+                  <p className="text-xs text-amber-800 leading-relaxed mb-0">
+                    세션 퀴즈에서 틀렸던 {wrongSessionQuizzes.length}개 문항이 코스 종합 퀴즈에 함께 재출제됩니다. 종합 퀴즈에서 정답을 맞히면 오답이 해소되어 코스 수료가 가능해집니다.
+                  </p>
                 </div>
               )}
+
+              <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                  <span className="text-xs font-bold text-slate-600">
+                    출제 문항 구성 (총 {quizQuestions.length}문항)
+                  </span>
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {anyTested ? '응시 이력 있음' : '미응시'}
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {quizQuestions.map((item, idx) => {
+                    const qLatest = [...answers].reverse().find(a => a.questionId === item.question.id)
+                    return (
+                      <div key={item.question.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${item.isSessionRetest ? 'bg-amber-100 text-amber-800' : 'bg-indigo-50 text-indigo-700'}`}>
+                            {item.isSessionRetest ? '세션 오답 재출제' : '코스 종합 퀴즈'}
+                          </span>
+                          {qLatest === undefined ? (
+                            <span className="text-xs font-semibold text-slate-500">미응시</span>
+                          ) : qLatest.correct ? (
+                            <span className="text-xs font-bold text-emerald-700 flex items-center gap-0.5">
+                              <Check className="w-3.5 h-3.5" /> 100점 (정답)
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-rose-700 flex items-center gap-0.5">
+                              <X className="w-3.5 h-3.5" /> 0점 (오답)
+                            </span>
+                          )}
+                        </div>
+                        <strong className="text-xs font-bold text-slate-800 block truncate">
+                          Q{idx + 1}. {item.question.prompt}
+                        </strong>
+                        {qLatest && (
+                          <div className="text-xs text-slate-600 bg-white p-2 rounded-lg border border-slate-200/60 mt-1">
+                            <span className="text-slate-500 font-medium">제출했던 답: </span>
+                            <span className={qLatest.correct ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                              {item.question.options[qLatest.selected]}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-center space-y-1 mt-2">
+                  <p className="text-xs font-bold text-indigo-900 mb-0">
+                    {anyTested ? '재시험에 응시하시면 점수가 새로 갱신됩니다.' : '학습한 전체 내용을 종합 평가합니다.'}
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <button
+                    type="button"
+                    className="primary-button full"
+                    onClick={handleStartQuiz}
+                  >
+                    {anyTested ? (
+                      <><RotateCcw className="w-4 h-4 mr-1" /> 종합 퀴즈 재시험 응시하기</>
+                    ) : (
+                      <>종합 퀴즈 응시하기 <ChevronRight className="w-4 h-4 ml-1" /></>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="outline-button full"
+                    onClick={onBack}
+                  >
+                    보관함으로 돌아가기
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
           {/* 2. 퀴즈 풀기 화면 (mode === 'testing') */}
           {mode === 'testing' && (
             <div className="space-y-4">
-              <span className="tag blue">
-                <Sparkles className="w-3 h-3" /> 대본 기반 · 강의자 검수 코스 퀴즈
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="tag blue">
+                  <Sparkles className="w-3 h-3" /> {currentItem.isSessionRetest ? '세션 퀴즈 오답 재출제 (코스 종합 퀴즈)' : '강사 직접 출제 코스 퀴즈'}
+                </span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                  문항 {currentIdx + 1} / {activeQuestions.length}
+                </span>
+              </div>
+
+              {currentItem.isSessionRetest && (
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs font-bold text-amber-800">
+                  <span className="flex items-center gap-1.5">
+                    <RotateCcw className="w-3.5 h-3.5" /> 세션 퀴즈에서 틀렸던 문제입니다.
+                  </span>
+                  <span className="text-amber-600 font-semibold">{currentItem.unitTitle}</span>
+                </div>
+              )}
+
+              {retryCount > 0 && (
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs font-bold text-amber-800">
+                  <span className="flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" /> 오답 1회 재출제 진행 중</span>
+                  <span className="text-amber-600 font-semibold">재도전 기회</span>
+                </div>
+              )}
+
               <h1 className="text-base font-black text-slate-900 leading-snug">
-                {question.prompt}
+                {currentQ.prompt}
               </h1>
               <p className="text-xs text-slate-500">
-                학습한 핵심 내용을 떠올려 정답을 하나 선택해 주세요.
+                {currentItem.isSessionRetest
+                  ? '이전에 세션 퀴즈에서 틀렸던 문제입니다. 코스 종합 퀴즈에서 올바른 답을 골라보세요.'
+                  : '학습한 핵심 내용을 떠올려 정답을 하나 선택해 주세요.'}
               </p>
 
               {/* 사용자 모드 퀴즈 카드 UI (A, B, C, D 배지) */}
               <div className="answer-list">
-                {question.options.map((option, index) => {
+                {currentQ.options.map((option, index) => {
                   const isSelected = selectedOption === index
+                  const isSubmitted = currentResult !== null
+                  let cardClass = 'answer transition-all'
+                  if (isSubmitted) {
+                    if (isSelected) {
+                      cardClass = currentResult.correct ? 'answer selected correct' : 'answer selected wrong'
+                    } else if (index === currentQ.correct) {
+                      cardClass = 'answer correct'
+                    }
+                  } else if (isSelected) {
+                    cardClass = 'answer selected'
+                  }
+
                   return (
                     <button
                       key={option}
                       type="button"
-                      className={`answer transition-all ${isSelected ? 'selected' : ''}`}
+                      disabled={isSubmitted}
+                      className={cardClass}
                       onClick={() => setSelectedOption(index)}
                     >
                       <span>{String.fromCharCode(65 + index)}</span>
-                      <span className="flex-1">{option}</span>
-                      {isSelected && <Check className="w-4 h-4 text-indigo-600" />}
+                      <span className="flex-1 text-left">{option}</span>
+                      {isSelected && !isSubmitted && <Check className="w-4 h-4 text-indigo-600" />}
                     </button>
                   )
                 })}
               </div>
 
+              {currentResult && (
+                <div className={currentResult.correct ? 'answer-feedback good' : 'answer-feedback'}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <strong className="text-sm font-extrabold">
+                      {currentResult.correct
+                        ? currentItem.isSessionRetest
+                          ? '정답입니다! 세션 퀴즈 오답을 보완했습니다.'
+                          : '정답입니다! 100점 획득'
+                        : '아쉽게도 오답입니다 (0점)'}
+                    </strong>
+                  </div>
+                  <p className="text-xs text-slate-700 leading-relaxed mb-0">{currentQ.explanation}</p>
+                </div>
+              )}
+
               <div className="pt-2 space-y-2">
-                <button
-                  type="button"
-                  className="primary-button full"
-                  disabled={selectedOption === null}
-                  onClick={() => {
-                    if (selectedOption !== null) {
-                      const correct = selectedOption === question.correct
-                      onSubmitAnswer(selectedOption, correct)
-                      setCurrentResult({ selected: selectedOption, correct })
-                      setMode('result')
-                    }
-                  }}
-                >
-                  답안 제출하기
-                </button>
-                <button
-                  type="button"
-                  className="outline-button full"
-                  onClick={() => setMode('decision')}
-                >
-                  응시 취소하고 돌아가기
-                </button>
+                {currentResult === null ? (
+                  <>
+                    <button
+                      type="button"
+                      className="primary-button full"
+                      disabled={selectedOption === null}
+                      onClick={() => {
+                        if (selectedOption !== null) {
+                          const correct = selectedOption === currentQ.correct
+                          onSubmitAnswer(currentQ, selectedOption, correct)
+                          setCurrentResult({ selected: selectedOption, correct })
+                          setSessionResults(prev => [
+                            ...prev.filter(r => r.question.id !== currentQ.id),
+                            { question: currentQ, selected: selectedOption, correct, isSessionRetest: currentItem.isSessionRetest },
+                          ])
+                        }
+                      }}
+                    >
+                      {retryCount === 1 ? '재출제 답안 제출하기' : '답안 제출하기'}
+                    </button>
+                    <button
+                      type="button"
+                      className="outline-button full"
+                      onClick={() => setMode('decision')}
+                    >
+                      응시 취소하고 돌아가기
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {!currentResult.correct && retryCount === 0 ? (
+                      <div className="space-y-2">
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1 text-center">
+                          <span className="text-xs font-bold text-amber-900 block">오답 재출제 기회 (1회 남음)</span>
+                          <p className="text-xs text-amber-700 mb-0">틀린 문제에 대해 1회 다시 풀 수 있는 기회가 제공됩니다.</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="primary-button full bg-indigo-600 hover:bg-indigo-700"
+                          onClick={() => {
+                            setRetryCount(prev => prev + 1)
+                            setSelectedOption(null)
+                            setCurrentResult(null)
+                          }}
+                        >
+                          <RotateCcw className="w-4 h-4 mr-1" /> 틀린 문제 다시 풀기 (1회)
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="primary-button full"
+                        onClick={handleNextQuestion}
+                      >
+                        {currentIdx < activeQuestions.length - 1 ? (
+                          <>다음 문항 풀기 ({currentIdx + 2}/{activeQuestions.length}) <ChevronRight className="w-4 h-4 ml-1" /></>
+                        ) : (
+                          <>최종 결과 확인하기 <ChevronRight className="w-4 h-4 ml-1" /></>
+                        )}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           )}
 
           {/* 3. 퀴즈 제출 결과 화면 (mode === 'result') */}
-          {mode === 'result' && currentResult && (
+          {mode === 'result' && (
             <div className="space-y-4">
-              <div className={currentResult.correct ? 'answer-feedback good' : 'answer-feedback'}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  {currentResult.correct ? (
-                    <span className="w-6 h-6 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center font-bold text-xs">
-                      ✓
-                    </span>
-                  ) : (
-                    <span className="w-6 h-6 rounded-full bg-rose-200 text-rose-800 flex items-center justify-center font-bold text-xs">
-                      ✕
-                    </span>
-                  )}
-                  <strong className="text-sm font-extrabold">
-                    {currentResult.correct ? '정답입니다! 100점 획득' : '아쉽게도 오답입니다 (0점)'}
-                  </strong>
-                </div>
-                <p className="text-xs text-slate-700 leading-relaxed">{question.explanation}</p>
-              </div>
+              {(() => {
+                const correctCount = sessionResults.filter(r => r.correct).length
+                const totalCount = activeQuestions.length
+                const score = Math.round((correctCount / totalCount) * 100)
+                const isAllCorrect = correctCount === totalCount
 
-              <div className="answer-list">
-                {question.options.map((option, index) => {
-                  const isUserChoice = currentResult.selected === index
-                  const isCorrectChoice = question.correct === index
-                  let cardClass = 'answer'
-                  if (isUserChoice) {
-                    cardClass = currentResult.correct ? 'answer selected correct' : 'answer selected wrong'
-                  } else if (isCorrectChoice) {
-                    cardClass = 'answer correct'
-                  }
-
-                  return (
-                    <div key={option} className={cardClass}>
-                      <span>{String.fromCharCode(65 + index)}</span>
-                      <span className="flex-1">{option}</span>
-                      {isCorrectChoice && (
-                        <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                          정답
-                        </span>
-                      )}
-                      {isUserChoice && !isCorrectChoice && (
-                        <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                          내 답안
-                        </span>
-                      )}
+                return (
+                  <>
+                    <div className={isAllCorrect ? 'answer-feedback good' : 'answer-feedback'}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <strong className="text-base font-extrabold">
+                          {isAllCorrect ? '🎉 코스 종합 퀴즈 만점 통과!' : '코스 종합 퀴즈 채점 완료'}
+                        </strong>
+                      </div>
+                      <p className="text-xs text-slate-700 leading-relaxed mb-0">
+                        총 {totalCount}문항 중 {correctCount}문항 정답 ({score}점 획득)
+                        {activeQuestions.some(q => q.isSessionRetest) && ' · 세션 퀴즈 오답 재출제 반영 완료'}
+                      </p>
                     </div>
-                  )
-                })}
-              </div>
 
-              <div className="pt-2 space-y-2">
-                <button
-                  type="button"
-                  className="primary-button full"
-                  onClick={onBack}
-                >
-                  보관함으로 돌아가기 <ChevronRight className="w-4 h-4 ml-1" />
-                </button>
-                <button
-                  type="button"
-                  className="outline-button full"
-                  onClick={() => {
-                    setSelectedOption(null)
-                    setMode('testing')
-                  }}
-                >
-                  <RotateCcw className="w-4 h-4 mr-1" /> 다시 재시험 보기
-                </button>
-              </div>
+                    <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-2xs">
+                      <h3 className="text-xs font-bold text-slate-700 border-b border-slate-100 pb-2">
+                        문항별 채점 상세
+                      </h3>
+                      <div className="space-y-2.5">
+                        {activeQuestions.map((item, idx) => {
+                          const res = sessionResults.find(r => r.question.id === item.question.id)
+                          const isCorrect = res ? res.correct : false
+                          return (
+                            <div key={item.question.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${item.isSessionRetest ? 'bg-amber-100 text-amber-800' : 'bg-indigo-50 text-indigo-700'}`}>
+                                  {item.isSessionRetest ? '세션 오답 재출제' : '코스 종합 퀴즈'}
+                                </span>
+                                {isCorrect ? (
+                                  <span className="text-xs font-bold text-emerald-700 flex items-center gap-0.5">
+                                    <Check className="w-3.5 h-3.5" /> 정답 (100점)
+                                  </span>
+                                ) : (
+                                  <span className="text-xs font-bold text-rose-700 flex items-center gap-0.5">
+                                    <X className="w-3.5 h-3.5" /> 오답 (0점)
+                                  </span>
+                                )}
+                              </div>
+                              <strong className="text-xs font-bold text-slate-800 block truncate">
+                                Q{idx + 1}. {item.question.prompt}
+                              </strong>
+                              <p className="text-xs text-slate-500 mb-0 pt-0.5">
+                                {item.question.explanation}
+                              </p>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="pt-2 space-y-2">
+                      <button
+                        type="button"
+                        className="primary-button full"
+                        onClick={onBack}
+                      >
+                        보관함으로 돌아가기 <ChevronRight className="w-4 h-4 ml-1" />
+                      </button>
+                      <button
+                        type="button"
+                        className="outline-button full"
+                        onClick={handleStartQuiz}
+                      >
+                        <RotateCcw className="w-4 h-4 mr-1" /> 종합 퀴즈 다시 응시하기
+                      </button>
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           )}
         </div>
@@ -1508,26 +1766,34 @@ function MyPageScreen({
   isDemoEmpty?: boolean
   onSwitchDemoState?: (mode: 'rich' | 'empty') => void
 }) {
-  // 프로필 상태
-  const [name, setName] = useState(profile.name || '김배움')
+  // 1. 대표 사진 수정 상태
   const [avatar, setAvatar] = useState(
     profile.avatar ||
       'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
   )
+  const [avatarSaved, setAvatarSaved] = useState(false)
 
-  // 온보딩 정보 상태
+  // 2. 온보딩 정보 상태
   const [status, setStatus] = useState(profile.status || '재직 중')
   const [job, setJob] = useState(profile.job || jobs[0])
   const [topics, setTopics] = useState<string[]>(profile.interests || ['문서 작성', '데이터 분석'])
+  const [onboardingSaved, setOnboardingSaved] = useState(false)
 
-  // 결제 방식 상태
+  // 3. 비밀번호 변경 상태
+  const [currentPw, setCurrentPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [pwError, setPwError] = useState('')
+  const [pwSuccess, setPwSuccess] = useState('')
+
+  // 4. 결제 방식 상태
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(profile.paymentMethods || [])
   const [isAddingPayment, setIsAddingPayment] = useState(false)
   const [payType, setPayType] = useState<PaymentMethod['type']>('card')
   const [payName, setPayName] = useState('')
   const [payNumber, setPayNumber] = useState('')
 
-  // 로그아웃 모달 상태
+  // 5. 로그아웃 모달 상태
   const [logoutModalOpen, setLogoutModalOpen] = useState(false)
 
   const toggleTopic = (item: string) => {
@@ -1536,12 +1802,52 @@ function MyPageScreen({
     )
   }
 
-  const handleSaveProfile = () => {
-    onUpdateLearner({ name, avatar })
+  // 대표 사진 파일 선택 처리 (미리보기)
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      if (typeof ev.target?.result === 'string') {
+        setAvatar(ev.target.result)
+        setAvatarSaved(false)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleSaveAvatar = () => {
+    onUpdateLearner({ avatar })
+    setAvatarSaved(true)
+    setTimeout(() => setAvatarSaved(false), 2500)
   }
 
   const handleSaveOnboarding = () => {
     onUpdateLearner({ status, job, interests: topics })
+    setOnboardingSaved(true)
+    setTimeout(() => setOnboardingSaved(false), 2500)
+  }
+
+  const handleChangePassword = () => {
+    setPwError('')
+    setPwSuccess('')
+    if (!currentPw.trim()) {
+      setPwError('현재 비밀번호를 입력해 주세요.')
+      return
+    }
+    if (newPw.length < 8) {
+      setPwError('새 비밀번호는 8자 이상이어야 합니다.')
+      return
+    }
+    if (newPw !== confirmPw) {
+      setPwError('새 비밀번호와 확인 비밀번호가 일치하지 않습니다.')
+      return
+    }
+    setCurrentPw('')
+    setNewPw('')
+    setConfirmPw('')
+    setPwSuccess('비밀번호가 성공적으로 변경되었습니다.')
+    setTimeout(() => setPwSuccess(''), 3000)
   }
 
   const handleAddPayment = () => {
@@ -1578,23 +1884,23 @@ function MyPageScreen({
       <div className="screen-heading">
         <p className="eyebrow">MY BAEUGO</p>
         <h1>마이페이지</h1>
-        <p className="muted">프로필, 온보딩 학습 설정, 결제 방식을 관리하세요.</p>
+        <p className="muted">대표 사진, 온보딩 정보, 비밀번호, 결제 방식을 관리하세요.</p>
       </div>
 
-      {/* 1. 프로필 수정 (프로필 사진, 이름) */}
+      {/* 1. 대표 사진 수정: 사진 선택 & 미리보기 -> 저장 */}
       <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4">
         <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
           <UserRound className="w-3.5 h-3.5 text-indigo-600" />
-          <span>수강생 프로필</span>
+          <span>대표 사진 수정</span>
         </h2>
 
         <div className="flex items-center gap-3.5">
           <div
-            className="w-14 h-14 rounded-full bg-cover bg-center shrink-0 border-2 border-indigo-200 shadow-sm"
+            className="w-16 h-16 rounded-full bg-cover bg-center shrink-0 border-2 border-indigo-200 shadow-sm relative group"
             style={{ backgroundImage: `url(${avatar})` }}
           />
-          <div className="flex-1 space-y-1.5">
-            <span className="text-xs font-bold text-slate-700 block">프로필 사진 선택</span>
+          <div className="flex-1 space-y-2">
+            <span className="text-xs font-bold text-slate-700 block">사진 선택 및 미리보기</span>
             <div className="flex items-center gap-2">
               {[
                 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
@@ -1605,32 +1911,34 @@ function MyPageScreen({
                 <button
                   key={i}
                   type="button"
-                  onClick={() => setAvatar(img)}
-                  className={`w-7 h-7 rounded-full bg-cover bg-center border ${
-                    avatar === img ? 'ring-2 ring-indigo-600 scale-105' : 'opacity-70'
+                  onClick={() => { setAvatar(img); setAvatarSaved(false) }}
+                  className={`w-7 h-7 rounded-full bg-cover bg-center border transition-transform ${
+                    avatar === img ? 'ring-2 ring-indigo-600 scale-105' : 'opacity-70 hover:opacity-100'
                   }`}
                   style={{ backgroundImage: `url(${img})` }}
+                  title={`프로필 프리셋 ${i + 1}`}
                 />
               ))}
             </div>
+            <label className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer transition-colors">
+              <span>내 사진 선택</span>
+              <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+            </label>
           </div>
         </div>
 
-        <label className="form-stack">
-          수강생 이름
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="이름 입력"
-          />
-        </label>
+        {avatarSaved && (
+          <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 text-center flex items-center justify-center gap-1">
+            <Check className="w-3.5 h-3.5" /> 대표 사진이 저장되었습니다.
+          </div>
+        )}
 
-        <button type="button" className="outline-button full" onClick={handleSaveProfile}>
-          프로필 사진 및 이름 저장
+        <button type="button" className="outline-button full" onClick={handleSaveAvatar}>
+          대표 사진 저장
         </button>
       </div>
 
-      {/* 2. 온보딩 정보 수정 */}
+      {/* 2. 온보딩 정보 수정: 현재 역할의 온보딩 화면 -> 정보 수정 및 저장 */}
       <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4">
         <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -1645,7 +1953,7 @@ function MyPageScreen({
                 key={item}
                 type="button"
                 className={status === item ? 'choice selected' : 'choice'}
-                onClick={() => setStatus(item)}
+                onClick={() => { setStatus(item); setOnboardingSaved(false) }}
               >
                 {item}
                 {status === item && <Check />}
@@ -1662,7 +1970,7 @@ function MyPageScreen({
                 key={item}
                 type="button"
                 className={job === item ? 'chip selected' : 'chip'}
-                onClick={() => setJob(item)}
+                onClick={() => { setJob(item); setOnboardingSaved(false) }}
               >
                 {item}
               </button>
@@ -1671,14 +1979,14 @@ function MyPageScreen({
         </div>
 
         <div className="space-y-1.5">
-          <span className="text-xs font-bold text-slate-700 block">관심 주제 (복수 선택)</span>
+          <span className="text-xs font-bold text-slate-700 block">주제 (복수 선택)</span>
           <div className="chip-grid">
             {interests.map(item => (
               <button
                 key={item}
                 type="button"
                 className={topics.includes(item) ? 'chip selected' : 'chip'}
-                onClick={() => toggleTopic(item)}
+                onClick={() => { toggleTopic(item); setOnboardingSaved(false) }}
               >
                 {item}
               </button>
@@ -1686,12 +1994,74 @@ function MyPageScreen({
           </div>
         </div>
 
+        {onboardingSaved && (
+          <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 text-center flex items-center justify-center gap-1">
+            <Check className="w-3.5 h-3.5" /> 온보딩 정보가 저장되었습니다.
+          </div>
+        )}
+
         <button type="button" className="primary-button full" onClick={handleSaveOnboarding}>
           온보딩 정보 저장
         </button>
       </div>
 
-      {/* 3. 결제 방식 관리 */}
+      {/* 3. 비밀번호 변경: 현재 및 새 비밀번호 입력 -> 확인 후 변경 */}
+      <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3.5">
+        <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+          <LockKeyhole className="w-3.5 h-3.5 text-indigo-600" />
+          <span>비밀번호 변경</span>
+        </h2>
+
+        <div className="space-y-2.5">
+          <label className="text-xs font-bold text-slate-700 block">
+            현재 비밀번호
+            <input
+              type="password"
+              className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+              value={currentPw}
+              onChange={e => setCurrentPw(e.target.value)}
+              placeholder="현재 사용 중인 비밀번호"
+            />
+          </label>
+          <label className="text-xs font-bold text-slate-700 block">
+            새 비밀번호
+            <input
+              type="password"
+              className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+              value={newPw}
+              onChange={e => setNewPw(e.target.value)}
+              placeholder="8자 이상 입력"
+            />
+          </label>
+          <label className="text-xs font-bold text-slate-700 block">
+            새 비밀번호 확인
+            <input
+              type="password"
+              className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+              value={confirmPw}
+              onChange={e => setConfirmPw(e.target.value)}
+              placeholder="새 비밀번호 다시 입력"
+            />
+          </label>
+        </div>
+
+        {pwError && (
+          <div className="p-2 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 text-center">
+            {pwError}
+          </div>
+        )}
+        {pwSuccess && (
+          <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-700 text-center flex items-center justify-center gap-1">
+            <Check className="w-3.5 h-3.5" /> {pwSuccess}
+          </div>
+        )}
+
+        <button type="button" className="outline-button full" onClick={handleChangePassword}>
+          비밀번호 변경
+        </button>
+      </div>
+
+      {/* 4. (수강자 전용) 결제 방식 관리: 결제수단 조회 & 등록 & 변경 */}
       <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
@@ -1708,7 +2078,7 @@ function MyPageScreen({
           </button>
         </div>
 
-        {/* 등록된 결제 수단 목록 */}
+        {/* 등록된 결제 수단 목록 (조회) */}
         <div className="space-y-2">
           {paymentMethods.length === 0 ? (
             <div className="empty-box py-3 text-xs">등록된 결제 수단이 없습니다.</div>
@@ -1754,7 +2124,7 @@ function MyPageScreen({
           )}
         </div>
 
-        {/* 결제 수단 추가 폼 */}
+        {/* 결제 수단 추가 폼 (등록) */}
         {isAddingPayment && (
           <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3 mt-2">
             <span className="text-xs font-bold text-indigo-900 block">새 결제 수단 등록</span>
@@ -1812,60 +2182,19 @@ function MyPageScreen({
         )}
       </div>
 
-      {/* 4. Mock 데모 데이터 상태 테스트 (정상 상태 vs Empty State) */}
-      <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>데모 Mock 데이터 상태</span>
-          </h2>
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isDemoEmpty ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-            {isDemoEmpty ? 'Empty State 모드' : '정상 Mock 모드'}
-          </span>
-        </div>
-        <p className="text-xs text-slate-500 mb-0">
-          모든 화면의 정상 상태(완강/수강중/메모/퀴즈/통계)와 비어 있는 상태(Empty State)를 즉시 전환하여 테스트할 수 있습니다.
-        </p>
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          <button
-            type="button"
-            className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${!isDemoEmpty ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
-            onClick={() => onSwitchDemoState?.('rich')}
-          >
-            정상 Mock 데이터
-          </button>
-          <button
-            type="button"
-            className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${isDemoEmpty ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
-            onClick={() => onSwitchDemoState?.('empty')}
-          >
-            빈 데이터 (Empty State)
-          </button>
-        </div>
-      </div>
-
-      {/* 5. 모드 전환 & 시작 재설정 */}
-      <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-2.5">
-        <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide">서비스 모드 및 계정</h2>
+      {/* 모드 전환: 강사 모드로 전환 */}
+      <div className="pt-1">
         <button
           type="button"
-          className="settings-row w-full rounded-xl border border-slate-200"
+          className="settings-row w-full rounded-xl border border-slate-200 bg-white"
           onClick={onCreator}
         >
-          <span>강의자 모드로 전환</span>
-          <ChevronRight />
-        </button>
-        <button
-          type="button"
-          className="settings-row w-full rounded-xl border border-slate-200"
-          onClick={onRestart}
-        >
-          <span>온보딩 다시 시작</span>
+          <span>강사 모드로 전환</span>
           <ChevronRight />
         </button>
       </div>
 
-      {/* 5. 수정 사항: 로그아웃 옵션 */}
+      {/* 5. 로그아웃: 로그아웃 확인 -> 시작 화면 */}
       <div className="pt-2">
         <button
           type="button"

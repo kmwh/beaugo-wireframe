@@ -26,10 +26,12 @@ import {
   Building2,
   TrendingUp,
   BarChart3,
+  LogOut,
 } from 'lucide-react'
 import {
   won,
   jobs,
+  interests,
   type Course,
   type CourseStatus,
   type Lesson,
@@ -76,6 +78,7 @@ export function CreatorStudio({
   onDeleteCourse,
   onUpdateProfile,
   onSwitch,
+  onLogout,
   isDemoEmpty,
   onToggleDemoState,
 }: {
@@ -87,6 +90,7 @@ export function CreatorStudio({
   onDeleteCourse: (courseId: string) => void
   onUpdateProfile: (profile: CreatorProfile) => void
   onSwitch: () => void
+  onLogout?: () => void
   isDemoEmpty?: boolean
   onToggleDemoState?: () => void
 }) {
@@ -104,9 +108,8 @@ export function CreatorStudio({
   const [selectedJob, setSelectedJob] = useState(profile.job || jobs[0])
   const [level, setLevel] = useState('초급')
   const [price, setPrice] = useState(29000)
-  const [plannedMinutes, setPlannedMinutes] = useState(40)
 
-  // Step 2: 무료 OT (선택 사항) & 섹션/영상 구조
+  // Step 2: 무료 OT (필수) & 섹션/영상 구조
   const [otFile, setOtFile] = useState<FileState>(emptyFile)
   const [sections, setSections] = useState<FormSection[]>([
     {
@@ -151,6 +154,10 @@ export function CreatorStudio({
     profile.avatar ||
       'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
   )
+  const [profileJob, setProfileJob] = useState(profile.job || jobs[0])
+  const [profileKeywords, setProfileKeywords] = useState<string[]>(
+    profile.keywords && profile.keywords.length > 0 ? profile.keywords : ['문서 작성', '보고서']
+  )
   const [profileBio, setProfileBio] = useState(profile.bio || '')
   const [bank, setBank] = useState(profile.settlementAccount?.bank || '신한은행')
   const [accountNumber, setAccountNumber] = useState(
@@ -158,33 +165,58 @@ export function CreatorStudio({
   )
   const [holder, setHolder] = useState(profile.settlementAccount?.holder || profile.name || '김강사')
 
-  // 강좌 관리 페이지 (manageCourseId 선택 시) 내부 상태
+  // 비밀번호 변경 상태
+  const [currentPw, setCurrentPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+
+  // 로그아웃 확인 모달 상태
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false)
+
+  // 강좌 관리 페이지 내부 상태 (단계별: 1: 강좌 정보, 2: 영상 관리, 3: 퀴즈·대본 검수, 4: 저장)
   const managingCourse = courses.find(c => c.id === manageCourseId) || null
+  const [manageStep, setManageStep] = useState<1 | 2 | 3 | 4>(1)
   const [manageTitle, setManageTitle] = useState('')
   const [manageSummary, setManageSummary] = useState('')
   const [manageJob, setManageJob] = useState(jobs[0])
   const [manageTopic, setManageTopic] = useState('')
   const [manageLevel, setManageLevel] = useState('초급')
   const [managePrice, setManagePrice] = useState(29000)
-  const [manageMinutes, setManageMinutes] = useState(60)
+  const [manageOtFile, setManageOtFile] = useState<FileState>(emptyFile)
   const [manageSections, setManageSections] = useState<FormSection[]>([])
   const [manageQuizzes, setManageQuizzes] = useState<Question[]>([])
   const [isAiRegenerating, setIsAiRegenerating] = useState(false)
   const [isReviewed, setIsReviewed] = useState(true)
-  const [deleteWarningModal, setDeleteWarningModal] = useState(false)
   const [statsMetric, setStatsMetric] = useState<'views' | 'students' | 'revenue'>('views')
   const [selectedDayIdx, setSelectedDayIdx] = useState<number>(8)
+
+  // 자동 계산 계획 학습 시간
+  const calculatedCreationMinutes = Math.max(
+    5,
+    sections.flatMap(s => s.lessons).reduce((sum, l) => sum + (l.duration || 5), 0)
+  )
+  const calculatedManageMinutes = Math.max(
+    5,
+    manageSections.flatMap(s => s.lessons).reduce((sum, l) => sum + (l.duration || 5), 0)
+  )
 
   // 동기화: managingCourse가 바뀔 때 수정 폼 채우기
   useEffect(() => {
     if (!managingCourse) return
+    setManageStep(1)
     setManageTitle(managingCourse.title)
     setManageSummary(managingCourse.summary)
     setManageJob(managingCourse.job)
     setManageTopic(managingCourse.topic)
     setManageLevel(managingCourse.level)
     setManagePrice(managingCourse.price)
-    setManageMinutes(managingCourse.plannedMinutes)
+    setManageOtFile({
+      status: 'ready',
+      name: `${managingCourse.title}_OT.mp4`,
+      duration: 30,
+      error: '',
+      blobId: managingCourse.otBlobId || '',
+    })
 
     const convertedSections: FormSection[] = managingCourse.units.map(unit => ({
       id: unit.id,
@@ -296,6 +328,23 @@ export function CreatorStudio({
     }
   }
 
+  // 관리 모드: 무료 OT 영상 교체 (삭제 불가, 교체만 가능)
+  async function handleReplaceManageOt(file?: File) {
+    if (!file) return
+    setManageOtFile({ status: 'checking', name: file.name, duration: 0, error: '', blobId: '' })
+    try {
+      const duration = await inspectVideo(file)
+      const blobId = `ot-${crypto.randomUUID()}`
+      await saveVideo(blobId, file)
+      setManageOtFile({ status: 'ready', name: file.name, duration: Math.round(duration), error: '', blobId })
+      showToast('무료 OT 영상이 성공적으로 교체되었습니다.')
+    } catch {
+      const blobId = `ot-${crypto.randomUUID()}`
+      setManageOtFile({ status: 'ready', name: file.name, duration: 30, error: '', blobId })
+      showToast('무료 OT 영상이 교체되었습니다.')
+    }
+  }
+
   // 섹션 & 영상 조작 함수들 (등록 모드)
   function addSection() {
     setSections(prev => [
@@ -374,6 +423,12 @@ export function CreatorStudio({
       return
     }
 
+    // 무료 OT는 필수 항목
+    if (otFile.status !== 'ready' && !otFile.blobId) {
+      showToast('무료 OT 영상을 필수로 등록해 주세요.')
+      return
+    }
+
     const courseId = `creator-${crypto.randomUUID()}`
 
     const builtUnits: LearningUnit[] = sections.map((sec, secIdx) => ({
@@ -414,7 +469,7 @@ export function CreatorStudio({
       tags: [...profile.keywords, topic.trim()],
       level,
       price: Math.max(0, price),
-      plannedMinutes: Math.max(1, plannedMinutes),
+      plannedMinutes: calculatedCreationMinutes,
       cover: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80',
       summary: summary.trim(),
       otVideo: otFile.status === 'ready' ? '/demo/report.webm' : '',
@@ -469,10 +524,12 @@ export function CreatorStudio({
       topic: manageTopic.trim(),
       level: manageLevel,
       price: Math.max(0, managePrice),
-      plannedMinutes: Math.max(1, manageMinutes),
+      plannedMinutes: calculatedManageMinutes,
       units: updatedUnits,
       courseQuizzes: manageQuizzes,
       finalQuestion: manageQuizzes[0] || managingCourse.finalQuestion,
+      otBlobId: manageOtFile.blobId || managingCourse.otBlobId,
+      otVideo: manageOtFile.blobId ? '' : managingCourse.otVideo,
       status: nextStatus ?? managingCourse.status ?? 'published',
       rejectionReason: nextStatus === 'under_review' ? undefined : managingCourse.rejectionReason,
     }
@@ -480,19 +537,6 @@ export function CreatorStudio({
     onUpdateCourse(updated)
     setManageCourseId(null)
     showToast('강좌 수정사항이 저장되었습니다.')
-  }
-
-  // 삭제 시도
-  function handleDeleteAttempt(course: Course) {
-    if (course.studentCount && course.studentCount > 0) {
-      setDeleteWarningModal(true)
-      return
-    }
-    if (confirm(`'${course.title}' 강좌를 삭제하시겠습니까?`)) {
-      onDeleteCourse(course.id)
-      setManageCourseId(null)
-      showToast('강좌가 삭제되었습니다.')
-    }
   }
 
   // 목업 AI 대본 및 퀴즈 다시 추출
@@ -570,11 +614,33 @@ export function CreatorStudio({
       {/* Top Header */}
       <header className="creator-header">
         <strong>
-          BAEUGO <span>강의자</span>
+          BAEUGO <span>강사</span>
         </strong>
-        <button className="text-link" onClick={onSwitch}>
-          수강 화면 보기 <ChevronRight />
-        </button>
+        <div className="flex items-center gap-2">
+          {onToggleDemoState && (
+            <button
+              type="button"
+              onClick={onToggleDemoState}
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                padding: '3px 8px',
+                borderRadius: '9999px',
+                border: isDemoEmpty ? '1px solid #fcd34d' : '1px solid #c7d2fe',
+                background: isDemoEmpty ? '#fef3c7' : '#eef2ff',
+                color: isDemoEmpty ? '#92400e' : '#4338ca',
+                cursor: 'pointer',
+                lineHeight: 1.2,
+              }}
+              title="정상 Mock 데이터와 빈 상태(Empty State) 전환"
+            >
+              {isDemoEmpty ? '빈 상태' : 'Mock 모드'}
+            </button>
+          )}
+          <button className="text-link" onClick={onSwitch}>
+            수강 화면 보기 <ChevronRight />
+          </button>
+        </div>
       </header>
 
       <div className="creator-content">
@@ -584,7 +650,7 @@ export function CreatorStudio({
         {stage === 'dashboard' && !manageCourseId && (
           <>
             <div className="screen-heading">
-              <p className="eyebrow">CREATOR STUDIO</p>
+              <p className="eyebrow">강사 대시보드</p>
               <h1>내 강좌를 관리해요</h1>
               <p className="muted">강좌를 등록하고 수강 현황을 확인하세요.</p>
             </div>
@@ -616,7 +682,6 @@ export function CreatorStudio({
                 setSelectedJob(profile.job || jobs[0])
                 setLevel('초급')
                 setPrice(29000)
-                setPlannedMinutes(40)
                 setOtFile(emptyFile)
                 setCreateStep(1)
                 setStage('create')
@@ -697,7 +762,7 @@ export function CreatorStudio({
         )}
 
         {/* ========================================================
-            SUBVIEW: 강좌 관리 페이지 (네비게이션 바는 여전히 '대시보드')
+            SUBVIEW: 강좌 관리 페이지 (단계별: 정보 → 영상 → 검수 → 저장)
            ======================================================== */}
         {stage === 'dashboard' && manageCourseId && managingCourse && (
           <div className="space-y-5 animate-in fade-in duration-200">
@@ -711,7 +776,7 @@ export function CreatorStudio({
                 <ArrowLeft />
               </button>
               <div className="text-center">
-                <span className="text-xs font-bold text-indigo-600">강좌 관리 & 검수</span>
+                <span className="text-xs font-bold text-indigo-600">강좌 관리 ({manageStep}/4 단계)</span>
                 <h1 className="text-sm font-black text-slate-900 line-clamp-1">
                   {managingCourse.title}
                 </h1>
@@ -737,52 +802,75 @@ export function CreatorStudio({
               </span>
             </div>
 
-            {/* 1. 기본 정보 수정 */}
-            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
-              <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
-                <span>1. 강좌 기본 메타데이터 수정</span>
-              </h2>
+            {/* 단계 네비게이션 탭 */}
+            <div className="grid grid-cols-4 gap-1 pb-1 border-b border-slate-100">
+              {[
+                { s: 1, label: '강좌 정보' },
+                { s: 2, label: '영상 관리' },
+                { s: 3, label: '퀴즈·대본 검수' },
+                { s: 4, label: '저장' },
+              ].map(item => (
+                <button
+                  key={item.s}
+                  type="button"
+                  onClick={() => setManageStep(item.s as 1 | 2 | 3 | 4)}
+                  className={`py-1.5 px-1 rounded-lg text-xs font-bold transition-all text-center truncate ${
+                    manageStep === item.s
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {item.s}. {item.label}
+                </button>
+              ))}
+            </div>
 
-              <div className="form-stack">
-                <label>
-                  강좌명
-                  <input
-                    value={manageTitle}
-                    onChange={e => setManageTitle(e.target.value)}
-                    placeholder="강좌 제목"
-                  />
-                </label>
-                <label>
-                  강좌 소개
-                  <textarea
-                    rows={3}
-                    value={manageSummary}
-                    onChange={e => setManageSummary(e.target.value)}
-                    placeholder="수강생에게 전할 소개"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-2">
+            {/* 1단계: 강좌 정보 */}
+            {manageStep === 1 && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4">
+                <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>1. 강좌 정보 수정</span>
+                </h2>
+
+                <div className="form-stack">
                   <label>
-                    전문 직무
-                    <select value={manageJob} onChange={e => setManageJob(e.target.value)}>
-                      {jobs.map(j => (
-                        <option key={j} value={j}>
-                          {j}
-                        </option>
-                      ))}
-                    </select>
+                    강좌명
+                    <input
+                      value={manageTitle}
+                      onChange={e => setManageTitle(e.target.value)}
+                      placeholder="강좌 제목"
+                    />
                   </label>
                   <label>
-                    난이도
-                    <select value={manageLevel} onChange={e => setManageLevel(e.target.value)}>
-                      <option>초급</option>
-                      <option>중급</option>
-                      <option>고급</option>
-                    </select>
+                    강좌 소개
+                    <textarea
+                      rows={3}
+                      value={manageSummary}
+                      onChange={e => setManageSummary(e.target.value)}
+                      placeholder="수강생에게 전할 소개"
+                    />
                   </label>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label>
+                      전문 직무
+                      <select value={manageJob} onChange={e => setManageJob(e.target.value)}>
+                        {jobs.map(j => (
+                          <option key={j} value={j}>
+                            {j}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      난이도
+                      <select value={manageLevel} onChange={e => setManageLevel(e.target.value)}>
+                        <option>초급</option>
+                        <option>중급</option>
+                        <option>고급</option>
+                      </select>
+                    </label>
+                  </div>
                   <label>
                     가격 (원)
                     <input
@@ -791,498 +879,519 @@ export function CreatorStudio({
                       onChange={e => setManagePrice(Number(e.target.value))}
                     />
                   </label>
-                  <label>
-                    계획 학습시간 (분)
-                    <input
-                      type="number"
-                      value={manageMinutes}
-                      onChange={e => setManageMinutes(Number(e.target.value))}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
 
-            {/* 2. 섹션 및 영상 구조 수정 */}
-            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                  <FileVideo className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>2. 섹션 및 영상 구조 관리</span>
-                </h2>
+                  {/* 계획 학습 시간 입력칸 제거: 자동 계산 표시 */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700">
+                    <span className="font-bold text-slate-900 block mb-0.5">
+                      계획 학습 시간 (영상 길이 자동 합산)
+                    </span>
+                    <span>
+                      총 <strong>{calculatedManageMinutes}분</strong> (등록된 강의 영상들의 길이를 합산하여 시스템이 자동 계산합니다)
+                    </span>
+                  </div>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => {
-                    setManageSections(prev => [
-                      ...prev,
-                      {
-                        id: `sec-${crypto.randomUUID()}`,
-                        title: `섹션 ${prev.length + 1}. 추가 섹션 제목`,
-                        lessons: [
-                          {
-                            id: `les-${crypto.randomUUID()}`,
-                            title: `1강. 핵심 실습`,
-                            duration: 5,
-                            fileState: emptyFile,
-                            transcript: [{ start: 0, text: '핵심 내용입니다.' }],
-                            quiz: {
-                              id: `q-${crypto.randomUUID()}`,
-                              prompt: '확인 퀴즈',
-                              options: ['정답', '오답1', '오답2', '오답3'],
-                              correct: 0,
-                              explanation: '해설',
-                            },
-                          },
-                        ],
-                      },
-                    ])
-                  }}
-                  className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline"
+                  className="primary-button full mt-4"
+                  onClick={() => setManageStep(2)}
                 >
-                  <Plus className="w-3.5 h-3.5" /> 섹션 추가
+                  다음: 영상 관리 <ChevronRight className="w-4 h-4 ml-1" />
                 </button>
               </div>
+            )}
 
-              {manageSections.map((sec, secIdx) => (
-                <div key={sec.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <input
-                      className="text-xs font-bold bg-white p-1.5 rounded border border-slate-300 flex-1"
-                      value={sec.title}
-                      onChange={e => {
-                        const copy = [...manageSections]
-                        copy[secIdx].title = e.target.value
-                        setManageSections(copy)
-                      }}
-                      placeholder="섹션 제목 수정"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setManageSections(prev => prev.filter((_, i) => i !== secIdx))}
-                      className="text-slate-400 hover:text-rose-600 p-1"
-                      title="섹션 삭제"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+            {/* 2단계: 영상 관리 */}
+            {manageStep === 2 && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                    <FileVideo className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>2. 무료 OT 교체 및 영상 구조 관리</span>
+                  </h2>
+                </div>
+
+                {/* 무료 OT 영상 교체 항목 (OT는 삭제 없이 교체만 가능) */}
+                <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-xs font-bold text-indigo-950">
+                      무료 OT 영상 교체 (OT는 삭제 없이 교체만 가능)
+                    </strong>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-white text-indigo-700 border border-indigo-200">
+                      {manageOtFile.status === 'ready' ? '영상 등록됨' : '준비 중'}
+                    </span>
                   </div>
+                  <p className="text-xs text-indigo-800">
+                    무료 OT는 수강생 체험을 위한 필수 영상으로 삭제할 수 없으며, 새 영상 파일로 교체할 수 있습니다.
+                  </p>
+                  <UploadBox
+                    title="무료 OT 영상 파일 교체하기"
+                    state={manageOtFile}
+                    onChoose={handleReplaceManageOt}
+                  />
+                </div>
 
-                  {/* 섹션 내 영상 목록 */}
-                  <div className="pl-2 border-l-2 border-indigo-200 space-y-2 mt-2">
-                    {sec.lessons.map((les, lesIdx) => (
-                      <div key={les.id} className="p-2 bg-white rounded-lg border border-slate-200 space-y-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <input
-                            className="text-xs font-semibold p-1 bg-slate-50 rounded border border-slate-200 flex-1"
-                            value={les.title}
-                            onChange={e => {
-                              const copy = [...manageSections]
-                              copy[secIdx].lessons[lesIdx].title = e.target.value
-                              setManageSections(copy)
-                            }}
-                            placeholder="영상 제목 수정"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const copy = [...manageSections]
-                              copy[secIdx].lessons = copy[secIdx].lessons.filter((_, i) => i !== lesIdx)
-                              setManageSections(copy)
-                            }}
-                            className="text-slate-400 hover:text-rose-600 p-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <span className="text-xs text-slate-400 block">
-                          영상 상태: {les.fileState.status === 'ready' ? '등록 완료' : '업로드 필요'} (
-                          {les.duration}초)
-                        </span>
-                      </div>
-                    ))}
+                {/* 섹션 및 영상 구조 관리 */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-xs font-bold text-slate-800">
+                      강좌 섹션 목록 ({manageSections.length}개 섹션)
+                    </strong>
                     <button
                       type="button"
                       onClick={() => {
-                        const copy = [...manageSections]
-                        copy[secIdx].lessons.push({
-                          id: `les-${crypto.randomUUID()}`,
-                          title: `${copy[secIdx].lessons.length + 1}강. 영상 제목`,
-                          duration: 5,
-                          fileState: emptyFile,
-                          transcript: [{ start: 0, text: '학습 내용' }],
-                          quiz: {
-                            id: `q-${crypto.randomUUID()}`,
-                            prompt: '퀴즈',
-                            options: ['정답', '오답1', '오답2', '오답3'],
-                            correct: 0,
-                            explanation: '해설',
+                        setManageSections(prev => [
+                          ...prev,
+                          {
+                            id: `sec-${crypto.randomUUID()}`,
+                            title: `섹션 ${prev.length + 1}. 추가 섹션 제목`,
+                            lessons: [
+                              {
+                                id: `les-${crypto.randomUUID()}`,
+                                title: `1강. 핵심 실습`,
+                                duration: 5,
+                                fileState: emptyFile,
+                                transcript: [{ start: 0, text: '핵심 내용입니다.' }],
+                                quiz: {
+                                  id: `q-${crypto.randomUUID()}`,
+                                  prompt: '확인 퀴즈',
+                                  options: ['정답', '오답1', '오답2', '오답3'],
+                                  correct: 0,
+                                  explanation: '해설',
+                                },
+                              },
+                            ],
                           },
-                        })
-                        setManageSections(copy)
+                        ])
                       }}
-                      className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline pt-1"
+                      className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline"
                     >
-                      <Plus className="w-3 h-3" /> 이 섹션에 영상 추가
+                      <Plus className="w-3.5 h-3.5" /> 섹션 추가
                     </button>
                   </div>
-                </div>
-              ))}
-            </div>
 
-            {/* 3. 코스 퀴즈 수정 */}
-            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                  <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>3. 코스 종합 퀴즈 관리 ({manageQuizzes.length}문항)</span>
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => addCourseQuiz(true)}
-                  className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline"
-                >
-                  <Plus className="w-3.5 h-3.5" /> 문제 추가
-                </button>
-              </div>
-
-              {manageQuizzes.map((quiz, qIdx) => (
-                <div key={quiz.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-indigo-900">문제 {qIdx + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => setManageQuizzes(prev => prev.filter((_, i) => i !== qIdx))}
-                      className="text-slate-400 hover:text-rose-600 p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <input
-                    className="text-xs p-2 bg-white rounded border border-slate-300 w-full font-semibold"
-                    value={quiz.prompt}
-                    onChange={e => {
-                      const copy = [...manageQuizzes]
-                      copy[qIdx].prompt = e.target.value
-                      setManageQuizzes(copy)
-                    }}
-                    placeholder="객관식 문항 내용(질문)"
-                  />
-                  <div className="space-y-2 pt-1">
-                    <span className="text-xs font-bold text-slate-700 block">
-                      4지선다 보기 및 정답 지정 (A, B, C, D 카드를 눌러 정답 선택)
-                    </span>
-                    <div className="space-y-2">
-                      {quiz.options.map((opt, optIdx) => {
-                        const isCorrect = quiz.correct === optIdx
-                        return (
-                          <div
-                            key={optIdx}
-                            className={`flex items-center gap-2 p-2 rounded-xl border transition-all ${
-                              isCorrect
-                                ? 'border-indigo-400 bg-indigo-50/50 shadow-xs'
-                                : 'border-slate-200 bg-white hover:border-slate-300'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              title="정답으로 지정"
-                              onClick={() => {
-                                const copy = [...manageQuizzes]
-                                copy[qIdx].correct = optIdx
-                                setManageQuizzes(copy)
-                              }}
-                              className={`w-7 h-7 rounded-full text-xs font-black shrink-0 flex items-center justify-center transition-colors ${
-                                isCorrect
-                                  ? 'bg-indigo-600 text-white shadow-xs'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700'
-                              }`}
-                            >
-                              {String.fromCharCode(65 + optIdx)}
-                            </button>
-                            <input
-                              className="text-xs p-1 bg-transparent border-0 focus:ring-0 flex-1 font-medium placeholder-slate-400 outline-none"
-                              value={opt}
-                              onChange={e => {
-                                const copy = [...manageQuizzes]
-                                copy[qIdx].options[optIdx] = e.target.value
-                                setManageQuizzes(copy)
-                              }}
-                              placeholder={`보기 ${String.fromCharCode(65 + optIdx)} 내용 입력`}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const copy = [...manageQuizzes]
-                                copy[qIdx].correct = optIdx
-                                setManageQuizzes(copy)
-                              }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 flex items-center gap-1 transition-colors ${
-                                isCorrect
-                                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                  : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200'
-                              }`}
-                            >
-                              {isCorrect ? (
-                                <>
-                                  <Check className="w-3 h-3" /> 정답
-                                </>
-                              ) : (
-                                '정답 선택'
-                              )}
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <textarea
-                    rows={2}
-                    className="text-xs p-2 bg-white rounded border border-slate-200 w-full resize-none"
-                    value={quiz.explanation}
-                    onChange={e => {
-                      const copy = [...manageQuizzes]
-                      copy[qIdx].explanation = e.target.value
-                      setManageQuizzes(copy)
-                    }}
-                    placeholder="정답 해설"
-                  />
-                </div>
-              ))}
-            </div>
-
-            {/* 4. 수정 사항 요구사항: AI를 통해 자동으로 생성된 문제별 퀴즈와 대본 내용을 검수할 수 있음 (목업) */}
-            <div className="p-4 bg-white rounded-2xl border border-indigo-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <h2 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-indigo-600" />
-                    <span>4. AI 생성 대본 & 문제별 퀴즈 검수 (목업)</span>
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    영상별 음성 추출 대본과 AI 퀴즈를 확인하고 검수/수정합니다.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRegenerateAi}
-                  disabled={isAiRegenerating}
-                  className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-200 flex items-center gap-1 flex-shrink-0"
-                >
-                  <RotateCcw className={`w-3.5 h-3.5 ${isAiRegenerating ? 'animate-spin' : ''}`} />
-                  <span>{isAiRegenerating ? 'AI 분석 중...' : 'AI 재추출 (목업)'}</span>
-                </button>
-              </div>
-
-              {manageSections.flatMap(sec => sec.lessons).map((les, idx) => (
-                <div key={les.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <strong className="text-xs font-bold text-slate-900 block">
-                    영상 {idx + 1}. {les.title}
-                  </strong>
-
-                  {/* 타임스탬프 대본 검수 */}
-                  <div className="space-y-1">
-                    <span className="text-xs font-bold text-slate-700 block">타임스탬프 대본</span>
-                    {les.transcript.map((tr, trIdx) => (
-                      <div key={trIdx} className="flex items-center gap-1 text-xs">
-                        <span className="font-mono text-xs text-indigo-600 bg-white px-2 py-1 rounded border border-slate-200">
-                          00:0{tr.start}
-                        </span>
+                  {manageSections.map((sec, secIdx) => (
+                    <div key={sec.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
                         <input
-                          className="flex-1 p-1 bg-white rounded border border-slate-200 text-xs"
-                          value={tr.text}
+                          className="text-xs font-bold bg-white p-1.5 rounded border border-slate-300 flex-1"
+                          value={sec.title}
                           onChange={e => {
                             const copy = [...manageSections]
-                            // find and update
+                            copy[secIdx].title = e.target.value
+                            setManageSections(copy)
+                          }}
+                          placeholder="섹션 제목 수정"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setManageSections(prev => prev.filter((_, i) => i !== secIdx))}
+                          className="text-slate-400 hover:text-rose-600 p-1"
+                          title="섹션 삭제"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* 섹션 내 영상 목록 */}
+                      <div className="pl-2 border-l-2 border-indigo-200 space-y-2 mt-2">
+                        {sec.lessons.map((les, lesIdx) => (
+                          <div key={les.id} className="p-2 bg-white rounded-lg border border-slate-200 space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <input
+                                className="text-xs font-semibold p-1 bg-slate-50 rounded border border-slate-200 flex-1"
+                                value={les.title}
+                                onChange={e => {
+                                  const copy = [...manageSections]
+                                  copy[secIdx].lessons[lesIdx].title = e.target.value
+                                  setManageSections(copy)
+                                }}
+                                placeholder="영상 제목 수정"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const copy = [...manageSections]
+                                  copy[secIdx].lessons = copy[secIdx].lessons.filter((_, i) => i !== lesIdx)
+                                  setManageSections(copy)
+                                }}
+                                className="text-slate-400 hover:text-rose-600 p-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <span className="text-xs text-slate-500 block">
+                              영상 길이: {les.duration}분 · 상태: {les.fileState.status === 'ready' ? '등록 완료' : '업로드 필요'}
+                            </span>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const copy = [...manageSections]
+                            copy[secIdx].lessons.push({
+                              id: `les-${crypto.randomUUID()}`,
+                              title: `${copy[secIdx].lessons.length + 1}강. 영상 제목`,
+                              duration: 5,
+                              fileState: emptyFile,
+                              transcript: [{ start: 0, text: '학습 내용' }],
+                              quiz: {
+                                id: `q-${crypto.randomUUID()}`,
+                                prompt: '확인 퀴즈',
+                                options: ['정답', '오답1', '오답2', '오답3'],
+                                correct: 0,
+                                explanation: '해설',
+                              },
+                            })
+                            setManageSections(copy)
+                          }}
+                          className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline pt-1"
+                        >
+                          <Plus className="w-3 h-3" /> 이 섹션에 영상 추가
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <button
+                    type="button"
+                    className="outline-button full"
+                    onClick={() => setManageStep(1)}
+                  >
+                    &lt; 이전: 강좌 정보
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button full"
+                    onClick={() => setManageStep(3)}
+                  >
+                    다음: 퀴즈·대본 검수 &gt;
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 3단계: 퀴즈·대본 검수 */}
+            {manageStep === 3 && (
+              <div className="space-y-4">
+                {/* 코스 종합 퀴즈 관리 */}
+                <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                      <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>코스 종합 퀴즈 관리 ({manageQuizzes.length}문항)</span>
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => addCourseQuiz(true)}
+                      className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> 문제 추가
+                    </button>
+                  </div>
+
+                  {manageQuizzes.map((quiz, qIdx) => (
+                    <div key={quiz.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-indigo-900">문제 {qIdx + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => setManageQuizzes(prev => prev.filter((_, i) => i !== qIdx))}
+                          className="text-slate-400 hover:text-rose-600 p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <input
+                        className="text-xs p-2 bg-white rounded border border-slate-300 w-full font-semibold"
+                        value={quiz.prompt}
+                        onChange={e => {
+                          const copy = [...manageQuizzes]
+                          copy[qIdx].prompt = e.target.value
+                          setManageQuizzes(copy)
+                        }}
+                        placeholder="객관식 문항 내용(질문)"
+                      />
+                      <div className="space-y-2 pt-1">
+                        <span className="text-xs font-bold text-slate-700 block">
+                          4지선다 보기 및 정답 지정 (버튼을 눌러 정답 선택)
+                        </span>
+                        <div className="space-y-2">
+                          {quiz.options.map((opt, optIdx) => {
+                            const isCorrect = quiz.correct === optIdx
+                            return (
+                              <div
+                                key={optIdx}
+                                className={`flex items-center gap-2 p-2 rounded-xl border transition-all ${
+                                  isCorrect
+                                    ? 'border-indigo-400 bg-indigo-50/50 shadow-xs'
+                                    : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  title="정답으로 지정"
+                                  onClick={() => {
+                                    const copy = [...manageQuizzes]
+                                    copy[qIdx].correct = optIdx
+                                    setManageQuizzes(copy)
+                                  }}
+                                  className={`w-7 h-7 rounded-full text-xs font-black shrink-0 flex items-center justify-center transition-colors ${
+                                    isCorrect
+                                      ? 'bg-indigo-600 text-white shadow-xs'
+                                      : 'bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700'
+                                  }`}
+                                >
+                                  {String.fromCharCode(65 + optIdx)}
+                                </button>
+                                <input
+                                  className="text-xs p-1 bg-transparent border-0 focus:ring-0 flex-1 font-medium placeholder-slate-400 outline-none"
+                                  value={opt}
+                                  onChange={e => {
+                                    const copy = [...manageQuizzes]
+                                    copy[qIdx].options[optIdx] = e.target.value
+                                    setManageQuizzes(copy)
+                                  }}
+                                  placeholder={`보기 ${String.fromCharCode(65 + optIdx)} 내용 입력`}
+                                />
+                                {isCorrect && (
+                                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-0.5 shrink-0">
+                                    <Check className="w-3 h-3" /> 정답
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <textarea
+                        rows={2}
+                        className="text-xs p-2 bg-white rounded border border-slate-200 w-full resize-none"
+                        value={quiz.explanation}
+                        onChange={e => {
+                          const copy = [...manageQuizzes]
+                          copy[qIdx].explanation = e.target.value
+                          setManageQuizzes(copy)
+                        }}
+                        placeholder="정답 해설"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* AI 생성 대본 & 문제별 퀴즈 검수 */}
+                <div className="p-4 bg-white rounded-2xl border border-indigo-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <h2 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                        <span>AI 생성 대본 & 단위 퀴즈 검수 (목업)</span>
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        영상별 음성 추출 대본과 AI 퀴즈를 확인하고 검수/수정합니다.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRegenerateAi}
+                      disabled={isAiRegenerating}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-200 flex items-center gap-1 flex-shrink-0"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${isAiRegenerating ? 'animate-spin' : ''}`} />
+                      <span>{isAiRegenerating ? 'AI 분석 중...' : 'AI 재추출 (목업)'}</span>
+                    </button>
+                  </div>
+
+                  {manageSections.flatMap(sec => sec.lessons).map((les, idx) => (
+                    <div key={les.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <strong className="text-xs font-bold text-slate-900 block">
+                        영상 {idx + 1}. {les.title}
+                      </strong>
+
+                      {/* 타임스탬프 대본 검수 */}
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-slate-700 block">타임스탬프 대본</span>
+                        {les.transcript.map((tr, trIdx) => (
+                          <div key={trIdx} className="flex items-center gap-1 text-xs">
+                            <span className="font-mono text-xs text-indigo-600 bg-white px-2 py-1 rounded border border-slate-200">
+                              00:0{tr.start}
+                            </span>
+                            <input
+                              className="flex-1 p-1 bg-white rounded border border-slate-200 text-xs"
+                              value={tr.text}
+                              onChange={e => {
+                                const copy = [...manageSections]
+                                for (const s of copy) {
+                                  const match = s.lessons.find(l => l.id === les.id)
+                                  if (match) {
+                                    match.transcript[trIdx].text = e.target.value
+                                    break
+                                  }
+                                }
+                                setManageSections(copy)
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* AI 생성 퀴즈 검수 */}
+                      <div className="space-y-1 pt-1 border-t border-slate-200">
+                        <span className="text-xs font-bold text-slate-700 block">
+                          AI 생성 단위 퀴즈
+                        </span>
+                        <input
+                          className="w-full p-1.5 bg-white rounded border border-slate-200 text-xs font-semibold"
+                          value={les.quiz.prompt}
+                          onChange={e => {
+                            const copy = [...manageSections]
                             for (const s of copy) {
                               const match = s.lessons.find(l => l.id === les.id)
                               if (match) {
-                                match.transcript[trIdx].text = e.target.value
+                                match.quiz.prompt = e.target.value
                                 break
                               }
                             }
                             setManageSections(copy)
                           }}
+                          placeholder="질문"
                         />
                       </div>
-                    ))}
-                  </div>
-
-                  {/* AI 생성 퀴즈 검수 */}
-                  <div className="space-y-1 pt-1 border-t border-slate-200">
-                    <span className="text-xs font-bold text-slate-700 block">
-                      AI 생성 영상별 퀴즈 (4지선다)
-                    </span>
-                    <input
-                      className="w-full p-1.5 bg-white rounded border border-slate-200 text-xs font-semibold"
-                      value={les.quiz.prompt}
-                      onChange={e => {
-                        const copy = [...manageSections]
-                        for (const s of copy) {
-                          const match = s.lessons.find(l => l.id === les.id)
-                          if (match) {
-                            match.quiz.prompt = e.target.value
-                            break
-                          }
-                        }
-                        setManageSections(copy)
-                      }}
-                      placeholder="질문"
-                    />
-                    <div className="grid grid-cols-2 gap-1.5 pt-1">
-                      {les.quiz.options.map((opt, optIdx) => {
-                        const isCorrect = les.quiz.correct === optIdx
-                        return (
-                          <div
-                            key={optIdx}
-                            className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-xs transition-colors ${
-                              isCorrect
-                                ? 'border-indigo-400 bg-indigo-50/70 shadow-xs'
-                                : 'border-slate-200 bg-white'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const copy = [...manageSections]
-                                for (const s of copy) {
-                                  const match = s.lessons.find(l => l.id === les.id)
-                                  if (match) {
-                                    match.quiz.correct = optIdx
-                                    break
-                                  }
-                                }
-                                setManageSections(copy)
-                              }}
-                              className={`w-6 h-6 rounded-full text-xs font-black shrink-0 flex items-center justify-center transition-colors ${
-                                isCorrect
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-indigo-100'
-                              }`}
-                              title="정답 지정"
-                            >
-                              {String.fromCharCode(65 + optIdx)}
-                            </button>
-                            <input
-                              className="p-1 text-xs bg-transparent border-0 flex-1 min-w-0 outline-none"
-                              value={opt}
-                              onChange={e => {
-                                const copy = [...manageSections]
-                                for (const s of copy) {
-                                  const match = s.lessons.find(l => l.id === les.id)
-                                  if (match) {
-                                    match.quiz.options[optIdx] = e.target.value
-                                    break
-                                  }
-                                }
-                                setManageSections(copy)
-                              }}
-                              placeholder={`보기 ${String.fromCharCode(65 + optIdx)}`}
-                            />
-                            {isCorrect && (
-                              <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                            )}
-                          </div>
-                        )
-                      })}
                     </div>
-                  </div>
-                </div>
-              ))}
+                  ))}
 
-              <label className="flex items-center gap-2 pt-2 border-t border-indigo-100 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isReviewed}
-                  onChange={e => setIsReviewed(e.target.checked)}
-                />
-                <span className="text-xs font-bold text-indigo-900">
-                  AI 추출 대본 및 문제별 퀴즈 검수를 완료했습니다.
-                </span>
-              </label>
-            </div>
-
-            {/* 5. 상태별 제어 및 저장 버튼 */}
-            <div className="space-y-2 pt-2 pb-6">
-              {managingCourse.status === 'published' && (
-                <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-slate-900 block">공개 설정</span>
-                    <span className="text-xs text-slate-500">
-                      수강자 탐색 피드 노출 여부를 토글합니다.
+                  <label className="flex items-center gap-2 pt-2 border-t border-indigo-100 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isReviewed}
+                      onChange={e => setIsReviewed(e.target.checked)}
+                    />
+                    <span className="text-xs font-bold text-indigo-900">
+                      AI 추출 대본 및 퀴즈 검수를 완료했습니다.
                     </span>
-                  </div>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      const updated: Course = { ...managingCourse, isPublic: !managingCourse.isPublic }
-                      onUpdateCourse(updated)
-                      showToast(`강좌가 ${updated.isPublic ? '공개' : '비공개'}로 전환되었습니다.`)
-                    }}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1 ${
-                      managingCourse.isPublic
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-slate-100 text-slate-700 border-slate-200'
-                    }`}
+                    className="outline-button full"
+                    onClick={() => setManageStep(2)}
                   >
-                    {managingCourse.isPublic ? <Eye className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                    <span>{managingCourse.isPublic ? '공개중' : '비공개'}</span>
+                    &lt; 이전: 영상 관리
                   </button>
-                </div>
-              )}
-
-              {managingCourse.status === 'under_review' && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-amber-900 block">운영자 검수 진행 중</span>
-                    <span className="text-xs text-amber-700">검수 요청을 취소하고 임시저장으로 회수합니다.</span>
-                  </div>
                   <button
                     type="button"
-                    onClick={() => handleSaveManagedCourse('draft')}
-                    className="px-3 py-1.5 bg-white text-amber-800 font-bold text-xs rounded-lg border border-amber-300"
+                    className="primary-button full"
+                    onClick={() => setManageStep(4)}
                   >
-                    검수 취소
+                    다음: 저장 &gt;
                   </button>
                 </div>
-              )}
-
-              {managingCourse.status === 'rejected' && (
-                <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 space-y-2">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-rose-900 block">반려 사유 안내</span>
-                    <p className="text-xs text-rose-700 leading-relaxed">
-                      {managingCourse.rejectionReason ||
-                        '2섹션 영상의 음질이 고르지 못하고, 퀴즈 해설 보강이 필요합니다.'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveManagedCourse('under_review')}
-                    className="w-full py-2 bg-rose-600 text-white font-bold text-xs rounded-lg shadow-sm"
-                  >
-                    보완 완료 후 재검수 신청
-                  </button>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteAttempt(managingCourse)}
-                  className="py-3 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 font-bold text-xs rounded-xl border border-slate-200 flex items-center justify-center gap-1.5"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>강좌 삭제</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveManagedCourse()}
-                  className="py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-500/20 flex items-center justify-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>수정사항 저장</span>
-                </button>
               </div>
-            </div>
+            )}
+
+            {/* 4단계: 저장 */}
+            {manageStep === 4 && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4">
+                <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>4. 강좌 수정사항 최종 저장</span>
+                </h2>
+
+                {/* 요약 카드 */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">강좌명</span>
+                    <strong className="text-slate-900">{manageTitle}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">직무 / 난이도</span>
+                    <strong className="text-slate-900">{manageJob} · {manageLevel}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">수강료</span>
+                    <strong className="text-indigo-600">{won(managePrice)}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">섹션 및 영상 수</span>
+                    <strong className="text-slate-900">
+                      섹션 {manageSections.length}개 · 총 {manageSections.flatMap(s => s.lessons).length}편
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">계획 학습 시간 (자동 계산)</span>
+                    <strong className="text-slate-900">총 {calculatedManageMinutes}분</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 font-medium">코스 종합 퀴즈</span>
+                    <strong className="text-slate-900">{manageQuizzes.length}문항</strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500 font-medium">무료 OT 영상</span>
+                    <strong className="text-emerald-700">
+                      {manageOtFile.status === 'ready' ? '교체/유지 확인 완료' : '등록됨'}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* 상태별 안내 */}
+                {managingCourse.status === 'under_review' && (
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-amber-900 block">운영자 검수 진행 중</span>
+                      <span className="text-xs text-amber-700">검수 요청을 취소하고 임시저장으로 회수합니다.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveManagedCourse('draft')}
+                      className="px-3 py-1.5 bg-white text-amber-800 font-bold text-xs rounded-lg border border-amber-300"
+                    >
+                      검수 취소
+                    </button>
+                  </div>
+                )}
+
+                {managingCourse.status === 'rejected' && (
+                  <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 space-y-2">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-rose-900 block">반려 사유 안내</span>
+                      <p className="text-xs text-rose-700 leading-relaxed">
+                        {managingCourse.rejectionReason ||
+                          '2섹션 영상의 음질이 고르지 못하고, 퀴즈 해설 보강이 필요합니다.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveManagedCourse('under_review')}
+                      className="w-full py-2 bg-rose-600 text-white font-bold text-xs rounded-lg shadow-sm"
+                    >
+                      보완 완료 후 재검수 신청
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <button
+                    type="button"
+                    className="outline-button full"
+                    onClick={() => setManageStep(3)}
+                  >
+                    &lt; 이전: 퀴즈·대본 검수
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveManagedCourse()}
+                    className="py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-500/20 flex items-center justify-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>수정사항 저장</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1354,15 +1463,14 @@ export function CreatorStudio({
                       onChange={event => setPrice(Number(event.target.value))}
                     />
                   </label>
-                  <label>
-                    계획 학습 시간(분)
-                    <input
-                      type="number"
-                      min="1"
-                      value={plannedMinutes}
-                      onChange={event => setPlannedMinutes(Number(event.target.value))}
-                    />
-                  </label>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700">
+                    <span className="font-bold text-slate-900 block mb-0.5">
+                      계획 학습 시간 (영상 길이 자동 합산)
+                    </span>
+                    <span>
+                      총 <strong>{calculatedCreationMinutes}분</strong> (등록된 강의 영상들의 길이를 합산하여 시스템이 자동 계산합니다)
+                    </span>
+                  </div>
                 </div>
                 <button
                   className="primary-button full mt-4"
@@ -1374,7 +1482,7 @@ export function CreatorStudio({
               </>
             )}
 
-            {/* 수정 사항: Step 2. 영상 업로드 (OT 선택 유지 + 섹션 추가/영상 추가 + 섹션/영상 제목 수정) */}
+            {/* 수정 사항: Step 2. 영상 업로드 (무료 OT 필수 + 섹션 추가/영상 추가 + 섹션/영상 제목 수정) */}
             {createStep === 2 && (
               <>
                 <StepHeader
@@ -1383,13 +1491,13 @@ export function CreatorStudio({
                   onBack={() => setCreateStep(1)}
                 />
                 <p className="muted small mb-3">
-                  무료 OT는 선택 사항이며, 섹션을 추가하고 각 섹션 내부에 영상을 등록할 수 있습니다.
+                  무료 OT는 필수 사항이며, 섹션을 추가하고 각 섹션 내부에 영상을 등록할 수 있습니다.
                 </p>
 
-                {/* 무료 OT: 선택 사항 유지 */}
+                {/* 무료 OT: 필수 */}
                 <div className="mb-4">
                   <UploadBox
-                    title="무료 OT 영상 (선택 사항)"
+                    title="무료 OT 영상 (필수)"
                     state={otFile}
                     onChoose={file => void chooseFile('ot', file)}
                   />
@@ -1502,7 +1610,13 @@ export function CreatorStudio({
 
                 <button
                   className="primary-button full mt-5"
-                  onClick={() => setCreateStep(3)}
+                  onClick={() => {
+                    if (otFile.status !== 'ready' && !otFile.blobId) {
+                      showToast('무료 OT 영상은 필수입니다. 영상을 업로드해 주세요.')
+                      return
+                    }
+                    setCreateStep(3)
+                  }}
                 >
                   3단계: 코스 퀴즈 등록으로 <ChevronRight />
                 </button>
@@ -1519,7 +1633,7 @@ export function CreatorStudio({
                 />
 
                 <div className="demo-banner mb-3">
-                  <Sparkles /> 수강생이 코스 완강 후 학습 내용을 총괄 점검할 수 있도록 '코스 퀴즈'를 등록합니다.
+                  <Sparkles /> 수강생이 코스 수료 후 학습 내용을 총괄 점검할 수 있도록 '코스 퀴즈'를 등록합니다.
                 </div>
 
                 <div className="space-y-4 mb-5">
@@ -1697,7 +1811,7 @@ export function CreatorStudio({
         {stage === 'stats' && (
           <div className="space-y-4 animate-in fade-in duration-150">
             <div className="screen-heading">
-              <p className="eyebrow">CREATOR ANALYTICS</p>
+              <p className="eyebrow">강사 통계</p>
               <h1>강좌 성과 통계</h1>
               <p className="muted">주요 운영 지표와 이번 달 일별 성장 추이를 확인하세요.</p>
             </div>
@@ -2016,64 +2130,143 @@ export function CreatorStudio({
         )}
 
         {/* ========================================================
-            수정 사항: STAGE 4: MYPAGE (강의자 마이페이지)
+            STAGE 4: MYPAGE (강사 마이페이지)
            ======================================================== */}
         {stage === 'mypage' && (
-          <div className="space-y-5 animate-in fade-in duration-150">
+          <div className="space-y-5 animate-in fade-in duration-150 pb-8">
             <div className="screen-heading">
-              <p className="eyebrow">CREATOR MY PAGE</p>
-              <h1>강의자 마이페이지</h1>
-              <p className="muted">프로필 정보와 정산 계좌를 관리하세요.</p>
+              <p className="eyebrow">INSTRUCTOR MY PAGE</p>
+              <h1>강사 마이페이지</h1>
+              <p className="muted">대표 사진, 온보딩 정보, 비밀번호, 정산 계좌를 관리하세요.</p>
             </div>
 
-            {/* 1. 프로필 수정 (프로필 사진, 이름, 이력) */}
+            {/* 1. 대표 사진 수정 (사진 선택&미리보기 -> 저장) */}
             <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
               <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                <UserRound className="w-3.5 h-3.5 text-indigo-600" />
-                <span>강사 프로필 수정</span>
+                <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                <span>대표 사진 수정</span>
               </h2>
 
-              {/* 프로필 사진 */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3.5">
                 <div
-                  className="w-16 h-16 rounded-full bg-cover bg-center border-2 border-indigo-100 shadow flex-shrink-0"
+                  className="w-16 h-16 rounded-full bg-cover bg-center border-2 border-indigo-200 shadow-sm flex-shrink-0"
                   style={{ backgroundImage: `url(${profileAvatar})` }}
                 />
-                <div className="space-y-1">
-                  <span className="text-xs font-bold text-slate-800 block">대표 프로필 사진</span>
-                  <div className="flex items-center gap-1.5">
+                <div className="flex-1 space-y-1.5">
+                  <span className="text-xs font-bold text-slate-800 block">사진 선택 & 미리보기</span>
+                  <div className="flex items-center gap-2">
                     {[
                       'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
                       'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
-                      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
+                      'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=400&q=80',
+                      'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=400&q=80',
                     ].map((imgUrl, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => setProfileAvatar(imgUrl)}
-                        className={`w-7 h-7 rounded-full bg-cover bg-center border ${
-                          profileAvatar === imgUrl ? 'ring-2 ring-indigo-600' : 'opacity-70'
+                        className={`w-7 h-7 rounded-full bg-cover bg-center border transition-all ${
+                          profileAvatar === imgUrl ? 'ring-2 ring-indigo-600 scale-105' : 'opacity-70 hover:opacity-100'
                         }`}
                         style={{ backgroundImage: `url(${imgUrl})` }}
+                        title={`강사 프로필 프리셋 ${i + 1}`}
                       />
                     ))}
                   </div>
+                  <label className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer transition-colors mt-1.5">
+                    <span>내 사진 선택</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        const reader = new FileReader()
+                        reader.onload = ev => {
+                          if (typeof ev.target?.result === 'string') {
+                            setProfileAvatar(ev.target.result)
+                          }
+                        }
+                        reader.readAsDataURL(file)
+                      }}
+                    />
+                  </label>
                 </div>
               </div>
 
-              {/* 이름 */}
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateProfile({
+                    ...profile,
+                    avatar: profileAvatar,
+                  })
+                  showToast('대표 사진이 저장되었습니다.')
+                }}
+                className="primary-button full"
+              >
+                대표 사진 저장
+              </button>
+            </div>
+
+            {/* 2. 온보딩 정보 수정 (현재 역할: 강사 온보딩 화면 -> 정보 수정 및 저장) */}
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>온보딩 정보 수정</span>
+              </h2>
+
               <label className="form-stack">
-                강사명 / 표시 이름
+                강사명
                 <input
                   value={profileName}
                   onChange={e => setProfileName(e.target.value)}
-                  placeholder="예: 김강사"
+                  placeholder="강사 성명"
                 />
               </label>
 
-              {/* 이력 (약력/경력 bio) */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-700 block">전문 직무</span>
+                <div className="chip-grid">
+                  {jobs.map(j => (
+                    <button
+                      key={j}
+                      type="button"
+                      className={profileJob === j ? 'chip selected' : 'chip'}
+                      onClick={() => setProfileJob(j)}
+                    >
+                      {j}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-700 block">주제 (복수 선택)</span>
+                <div className="chip-grid">
+                  {interests.map(t => {
+                    const isSelected = profileKeywords.includes(t)
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        className={isSelected ? 'chip selected' : 'chip'}
+                        onClick={() =>
+                          setProfileKeywords(prev =>
+                            isSelected ? prev.filter(k => k !== t) : [...prev, t]
+                          )
+                        }
+                      >
+                        {t}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               <label className="form-stack">
-                강사 이력 (약력 및 경력 소개)
+                강사 약력 (5자 이상)
                 <textarea
                   rows={4}
                   value={profileBio}
@@ -2088,77 +2281,210 @@ export function CreatorStudio({
                   onUpdateProfile({
                     ...profile,
                     name: profileName,
-                    avatar: profileAvatar,
+                    job: profileJob,
+                    keywords: profileKeywords,
                     bio: profileBio,
                   })
-                  showToast('프로필 정보가 저장되었습니다.')
+                  showToast('강사 온보딩 정보가 수정되었습니다.')
                 }}
                 className="primary-button full"
               >
-                프로필 정보 저장
+                온보딩 정보 저장
               </button>
             </div>
 
-            {/* 2. 정산 정보 등록 (임시) */}
-            <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            {/* 3. 비밀번호 변경 (현재 및 새 비밀번호 입력 -> 확인 후 변경) */}
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-3">
               <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                <span>정산 정보 등록 (임시)</span>
+                <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>비밀번호 변경</span>
               </h2>
 
               <label className="form-stack">
-                정산 은행
-                <select value={bank} onChange={e => setBank(e.target.value)}>
-                  <option value="신한은행">신한은행</option>
-                  <option value="국민은행">국민은행</option>
-                  <option value="우리은행">우리은행</option>
-                  <option value="하나은행">하나은행</option>
-                  <option value="카카오뱅크">카카오뱅크</option>
-                  <option value="토스뱅크">토스뱅크</option>
-                </select>
-              </label>
-
-              <label className="form-stack">
-                정산 계좌번호
+                현재 비밀번호
                 <input
-                  value={accountNumber}
-                  onChange={e => setAccountNumber(e.target.value)}
-                  placeholder="하이픈(-) 포함 입력"
+                  type="password"
+                  value={currentPw}
+                  onChange={e => setCurrentPw(e.target.value)}
+                  placeholder="현재 비밀번호 입력"
                 />
               </label>
-
               <label className="form-stack">
-                예금주명
+                새 비밀번호
                 <input
-                  value={holder}
-                  onChange={e => setHolder(e.target.value)}
-                  placeholder="예금주 성명"
+                  type="password"
+                  value={newPw}
+                  onChange={e => setNewPw(e.target.value)}
+                  placeholder="새 비밀번호 입력 (8자 이상)"
+                />
+              </label>
+              <label className="form-stack">
+                새 비밀번호 확인
+                <input
+                  type="password"
+                  value={confirmPw}
+                  onChange={e => setConfirmPw(e.target.value)}
+                  placeholder="새 비밀번호 다시 입력"
                 />
               </label>
 
               <button
                 type="button"
                 onClick={() => {
-                  onUpdateProfile({
-                    ...profile,
-                    settlementAccount: {
-                      bank,
-                      accountNumber,
-                      holder,
-                    },
-                  })
-                  showToast('정산 계좌 정보가 저장되었습니다.')
+                  if (!currentPw.trim()) {
+                    showToast('현재 비밀번호를 입력해 주세요.')
+                    return
+                  }
+                  if (newPw.length < 8) {
+                    showToast('새 비밀번호는 8자 이상이어야 합니다.')
+                    return
+                  }
+                  if (newPw !== confirmPw) {
+                    showToast('새 비밀번호가 일치하지 않습니다.')
+                    return
+                  }
+                  setCurrentPw('')
+                  setNewPw('')
+                  setConfirmPw('')
+                  showToast('비밀번호가 성공적으로 변경되었습니다.')
                 }}
                 className="outline-button full"
               >
-                정산 정보 저장
+                비밀번호 변경
               </button>
             </div>
+
+            {/* 4. (강사에게만 표시) 정산 계좌 관리 (정산계좌 조회&등록&변경) */}
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>정산 계좌 관리</span>
+                </h2>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  계좌 등록됨
+                </span>
+              </div>
+
+              {/* 현재 등록된 정산 계좌 조회 */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+                <span className="font-bold text-slate-700 block">현재 등록된 정산 계좌</span>
+                <div className="text-slate-900 font-semibold">
+                  {profile.settlementAccount?.bank || bank} · {profile.settlementAccount?.accountNumber || accountNumber}
+                </div>
+                <div className="text-slate-500">
+                  예금주: {profile.settlementAccount?.holder || holder}
+                </div>
+              </div>
+
+              {/* 계좌 변경 입력 폼 */}
+              <div className="space-y-3 pt-1 border-t border-slate-100">
+                <span className="text-xs font-bold text-slate-800 block">정산 계좌 변경 및 등록</span>
+                <label className="form-stack">
+                  정산 은행
+                  <select value={bank} onChange={e => setBank(e.target.value)}>
+                    <option value="신한은행">신한은행</option>
+                    <option value="국민은행">국민은행</option>
+                    <option value="우리은행">우리은행</option>
+                    <option value="하나은행">하나은행</option>
+                    <option value="카카오뱅크">카카오뱅크</option>
+                    <option value="토스뱅크">토스뱅크</option>
+                  </select>
+                </label>
+
+                <label className="form-stack">
+                  정산 계좌번호
+                  <input
+                    value={accountNumber}
+                    onChange={e => setAccountNumber(e.target.value)}
+                    placeholder="하이픈(-) 포함 입력"
+                  />
+                </label>
+
+                <label className="form-stack">
+                  예금주명
+                  <input
+                    value={holder}
+                    onChange={e => setHolder(e.target.value)}
+                    placeholder="예금주 성명"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!accountNumber.trim() || !holder.trim()) {
+                      showToast('계좌번호와 예금주를 입력해 주세요.')
+                      return
+                    }
+                    onUpdateProfile({
+                      ...profile,
+                      settlementAccount: {
+                        bank,
+                        accountNumber: accountNumber.trim(),
+                        holder: holder.trim(),
+                      },
+                    })
+                    showToast('정산 계좌 정보가 성공적으로 변경되었습니다.')
+                  }}
+                  className="primary-button full"
+                >
+                  정산 계좌 저장
+                </button>
+              </div>
+            </div>
+
+            {/* 5. 로그아웃 (로그아웃 확인 -> 시작 화면) */}
+            <div className="pt-1">
+              <button
+                type="button"
+                className="w-full py-3 px-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-rose-100 transition-colors"
+                onClick={() => setLogoutModalOpen(true)}
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>로그아웃</span>
+              </button>
+            </div>
+
+            {/* 로그아웃 확인 모달 */}
+            {logoutModalOpen && (
+              <div className="modal-backdrop" onClick={() => setLogoutModalOpen(false)}>
+                <div className="modal-card text-center" onClick={e => e.stopPropagation()}>
+                  <div className="w-11 h-11 mx-auto rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mb-2">
+                    <LogOut className="w-5 h-5" />
+                  </div>
+                  <h2>로그아웃 하시겠습니까?</h2>
+                  <p className="text-xs text-slate-600 mb-4">
+                    로그아웃 시 시작 화면으로 이동합니다.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="outline-button"
+                      onClick={() => setLogoutModalOpen(false)}
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button bg-rose-600 hover:bg-rose-700 border-none"
+                      onClick={() => {
+                        setLogoutModalOpen(false)
+                        if (onLogout) onLogout()
+                        else onSwitch()
+                      }}
+                    >
+                      로그아웃
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* 수정 사항: 하단 네비게이션 바에 '마이페이지' 메뉴 추가 ([대시보드], [등록], [통계], [마이페이지]) */}
+      {/* 하단 네비게이션 바: [대시보드], [등록], [통계], [마이페이지] */}
       <nav className="creator-nav">
         <button
           className={stage === 'dashboard' ? 'active' : ''}
@@ -2198,25 +2524,6 @@ export function CreatorStudio({
           <UserRound /> 마이페이지
         </button>
       </nav>
-
-      {/* 수강생 존재 시 삭제 불가 경고 모달 */}
-      {deleteWarningModal && (
-        <div className="modal-backdrop" onClick={() => setDeleteWarningModal(false)}>
-          <div className="modal-card text-center" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-12 mx-auto rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mb-2">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <h2>강좌 삭제 불가</h2>
-            <p className="text-xs text-slate-600 leading-relaxed mb-4">
-              수강생이 존재하는 강좌는 삭제할 수 없습니다.<br />
-              비공개로 전환하세요.
-            </p>
-            <button className="primary-button" onClick={() => setDeleteWarningModal(false)}>
-              확인
-            </button>
-          </div>
-        </div>
-      )}
 
       {toast && (
         <div className="toast" role="status">

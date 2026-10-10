@@ -72,14 +72,18 @@ function question(id: string, topic: string, promptText?: string, options?: stri
 
 function lesson(courseId: string, unit: number, index: number, title: string, video: string): Lesson {
   const id = `${courseId}-u${unit}-v${index}`
+  const duration = 4 + ((unit + index) % 3)
   return {
     id,
     title,
-    duration: 5,
+    duration,
     video,
     transcript: [
-      { start: 0, text: `${title}를 시작하기 전에 목적과 해결할 문제를 정리합니다.` },
-      { start: 2, text: '핵심을 한 문장으로 쓰고, 실제 업무에 적용할 다음 행동을 선택해 보세요.' },
+      { start: 0, text: `${title}를 시작하기 전에 오늘의 핵심 목표와 해결할 과제를 정리합니다.` },
+      { start: 1, text: '가장 중요한 핵심 아이디어를 한 문장으로 구조화하고 지표를 확인해 보세요.' },
+      { start: 2, text: '실무 예시와 체크포인트를 통해 현업에서 바로 쓸 수 있는 프레임워크를 배웁니다.' },
+      { start: 3, text: '자주 발생하는 실수와 이를 사전에 예방하기 위한 검증 기준을 알아봅니다.' },
+      { start: 4, text: '배운 내용을 즉시 업무 보고서와 실행 계획에 적용해 보세요.' },
     ],
     question: question(`${id}-quiz`, title),
   }
@@ -295,7 +299,11 @@ export function allLessons(course: Course): Lesson[] {
 }
 
 export function minutes(course: Course): number {
-  return course.plannedMinutes
+  const lessons = allLessons(course)
+  if (lessons.length > 0) {
+    return lessons.reduce((total, l) => total + (l.duration || 5), 0)
+  }
+  return course.plannedMinutes || 20
 }
 
 export function won(value: number): string {
